@@ -13,3 +13,8 @@ CMakeFiles/
 sources/**/openmw
 sources/**/bin/openmw
 *.bin
+
+# compiled binaries - rebuilt from source
+sources/**/openmw
+sources/**/bin/openmw
+*.bin
