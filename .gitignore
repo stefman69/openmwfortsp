@@ -1,0 +1,15 @@
+*.o
+*.a
+*.so
+*.so.*
+build/
+build-*/
+CMakeFiles/
+*.tar.gz
+*.before-*
+*.bak*
+
+# compiled binaries - rebuilt from source
+sources/**/openmw
+sources/**/bin/openmw
+*.bin

@@ -1,0 +1,6 @@
+# repo: sdl2-src
+# HEAD:   8236e01a9f758d15927624925c6043f84d8a261f
+# branch: tags/release-2.30.12
+# --- status ---
+ M src/render/opengles2/SDL_shaders_gles2.c
+ M test/testgles2_sdf.c

@@ -1,0 +1,4 @@
+# repo: mygui-3.4.2-openmw048-dropdown-src
+# HEAD:   a81a88693fa25710a85a5cd64b2481071bf87f30
+# branch: tags/MyGUI3.4.2
+# --- status ---

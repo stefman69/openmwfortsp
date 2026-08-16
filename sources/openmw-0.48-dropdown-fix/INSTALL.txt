@@ -1,0 +1,23 @@
+OpenMW 0.48 visible-dropdown repair
+
+Copy:
+  openmw
+to:
+  D:\Data\ports\openmw\openmw
+
+Copy every:
+  lib\libMyGUIEngine.so*
+to:
+  D:\Data\ports\openmw\lib\
+
+Replace the existing MyGUIEngine files with these matching files.
+
+This binary preserves the source patches already present in /root/openmw.
+The MyGUI library was rebuilt with:
+  MYGUI_DONT_USE_OBSOLETE=OFF
+
+After installation, remove this obsolete experimental override if present:
+  D:\Data\ports\openmw\savegame\data\mygui\openmw_savegame_dialog.layout
+
+Use the previously functional launcher rather than the temporary dropdown
+layout override. The MyGUI repair fixes dropdown/list item height globally.

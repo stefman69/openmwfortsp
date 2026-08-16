@@ -1,0 +1,11 @@
+prefix=/root/mygui-3.4.3-openmw051-gcc13-install
+exec_prefix=${prefix}
+libdir=/root/mygui-3.4.3-openmw051-gcc13-install/lib
+includedir=${prefix}/include
+
+Name: MyGUI
+Description: Fast, flexible and simple GUI
+Version: 3.4.3
+URL: http://mygui.info
+Libs: -L${libdir} -lMyGUIEngine 
+Cflags: -I${includedir} -I${includedir}/MYGUI 

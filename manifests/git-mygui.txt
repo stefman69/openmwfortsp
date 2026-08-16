@@ -1,0 +1,4 @@
+# repo: mygui
+# HEAD:   a81a88693fa25710a85a5cd64b2481071bf87f30
+# branch: tags/MyGUI3.4.2
+# --- status ---

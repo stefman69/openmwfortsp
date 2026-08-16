@@ -1,0 +1,62 @@
+#include <components/version/version.hpp>
+
+#include <filesystem>
+#include <fstream>
+
+namespace Version
+{
+    std::string_view getVersion()
+    {
+        return "0.51.0";
+    }
+
+    std::string_view getCommitHash()
+    {
+        return "";
+    }
+
+    std::string_view getTagHash()
+    {
+        return "";
+    }
+
+    int getLuaApiRevision()
+    {
+        return 129;
+    }
+
+    int getPostprocessingApiRevision()
+    {
+        return 5;
+    }
+
+    std::string getOpenmwVersionDescription()
+    {
+        std::string str = "OpenMW version ";
+        str += getVersion();
+        if (!getCommitHash().empty())
+        {
+            str += "\nRevision: ";
+            str += getCommitHash().substr(0, 10);
+        }
+        return str;
+    }
+
+    bool checkResourcesVersion(const std::filesystem::path& resourcePath)
+    {
+        std::ifstream stream(resourcePath / "version");
+        std::string version, commitHash, tagHash;
+        std::getline(stream, version);
+        std::getline(stream, commitHash);
+        std::getline(stream, tagHash);
+        return getVersion() == version && getCommitHash() == commitHash && getTagHash() == tagHash;
+    }
+
+    std::string_view getDocumentationUrl()
+    {
+        if constexpr (std::string_view("") == "")
+            return "https://openmw.readthedocs.io/en/openmw-0.51.0/";
+        else
+            return "https://openmw.readthedocs.io/en/latest/";
+    }
+}
