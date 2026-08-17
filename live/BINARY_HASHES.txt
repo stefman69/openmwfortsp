@@ -1,0 +1,3 @@
+4aa84cd1976e4a711f1b1cc26a90a48f595c77c1a7d483e7d0e34bd00a96ffdf  bin/openmw-0.51
+3bf37c5c9bfd78eea1390bbdc7665f95064e5f4bda4ffbb12337cfd14fb5ab35  bin/defaults.bin
+c6ee62b8a8619baf5e5bcb03c4944c2348c402472b60af24cbe871d9ef206130  lib/libGL.so.1
