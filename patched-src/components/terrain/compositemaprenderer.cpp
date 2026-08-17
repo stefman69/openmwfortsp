@@ -1,0 +1,205 @@
+#include "compositemaprenderer.hpp"
+
+#include <osg/FrameBufferObject>
+#include <osg/RenderInfo>
+#include <osg/Texture2D>
+
+#include <algorithm>
+
+namespace Terrain
+{
+
+    CompositeMapRenderer::CompositeMapRenderer()
+        : mTargetFrameRate(120)
+        , mMinimumTimeAvailable(0.0025)
+    {
+        setSupportsDisplayList(false);
+        setCullingActive(false);
+
+        mFBO = new osg::FrameBufferObject;
+    }
+
+    CompositeMapRenderer::~CompositeMapRenderer() = default;
+
+    void CompositeMapRenderer::drawImplementation(osg::RenderInfo& renderInfo) const
+    {
+        double dt = mTimer.time_s();
+        dt = std::min(dt, 0.2);
+        mTimer.setStartTick();
+        double targetFrameTime = 1.0 / static_cast<double>(mTargetFrameRate);
+        double conservativeTimeRatio(0.75);
+        double availableTime = std::max((targetFrameTime - dt) * conservativeTimeRatio, mMinimumTimeAvailable);
+
+        std::lock_guard<std::mutex> lock(mMutex);
+
+        if (mImmediateCompileSet.empty() && mCompileSet.empty())
+            return;
+
+        while (!mImmediateCompileSet.empty())
+        {
+            osg::ref_ptr<CompositeMap> node = *mImmediateCompileSet.begin();
+            mImmediateCompileSet.erase(node);
+
+            mMutex.unlock();
+            compile(*node, renderInfo);
+            mMutex.lock();
+        }
+
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::duration<double>(availableTime);
+        while (!mCompileSet.empty() && std::chrono::steady_clock::now() < deadline)
+        {
+            osg::ref_ptr<CompositeMap> node = *mCompileSet.begin();
+            mCompileSet.erase(node);
+
+            mMutex.unlock();
+            compile(*node, renderInfo);
+            mMutex.lock();
+
+            if (node->mCompiled < node->mDrawables.size())
+            {
+                // We did not compile the map fully.
+                // Place it back to queue to continue work in the next time.
+                mCompileSet.insert(node);
+            }
+        }
+        mTimer.setStartTick();
+    }
+
+    void CompositeMapRenderer::compile(CompositeMap& compositeMap, osg::RenderInfo& renderInfo) const
+    {
+        // if there are no more external references we can assume the texture is no longer required
+        if (compositeMap.mTexture->referenceCount() <= 1)
+        {
+            compositeMap.mCompiled = compositeMap.mDrawables.size();
+            return;
+        }
+
+        osg::Timer timer;
+        osg::State& state = *renderInfo.getState();
+        osg::GLExtensions* ext = state.get<osg::GLExtensions>();
+
+        if (!mFBO)
+            return;
+
+        if (!ext->isFrameBufferObjectSupported)
+            return;
+
+        osg::FrameBufferAttachment attach(compositeMap.mTexture);
+        mFBO->setAttachment(osg::Camera::COLOR_BUFFER, attach);
+
+        // TSP_COMPOSITE_GLES2_FIX: GLES2 will not accept a colour-only framebuffer -
+        // it reports GL_FRAMEBUFFER_INCOMPLETE_MISSING_ATTACHMENT, the check
+        // below then fails and this function returns without drawing, which
+        // is why distant terrain rendered black. Attach a depth renderbuffer
+        // sized to the composite texture. Cached so it is created once per
+        // size rather than per chunk.
+        {
+            const int tspW = compositeMap.mTexture->getTextureWidth();
+            const int tspH = compositeMap.mTexture->getTextureHeight();
+            static osg::ref_ptr<osg::RenderBuffer> tspDepthRB;
+            static int tspDepthW = 0, tspDepthH = 0;
+            if (!tspDepthRB || tspDepthW != tspW || tspDepthH != tspH)
+            {
+                tspDepthRB = new osg::RenderBuffer(tspW, tspH, GL_DEPTH_COMPONENT16);
+                tspDepthW = tspW;
+                tspDepthH = tspH;
+            }
+            mFBO->setAttachment(osg::Camera::DEPTH_BUFFER,
+                osg::FrameBufferAttachment(tspDepthRB));
+        }
+
+        // TSP_COMPOSITE_GLES2_FIX: GLES2 has no read/draw framebuffer split. Applying
+        // with DRAW_FRAMEBUFFER (0x8CA9) and then checking status against
+        // GL_FRAMEBUFFER (0x8D40) refers to two different objects through the
+        // gl4es translation layer. Use the combined target so both agree.
+        mFBO->apply(state, osg::FrameBufferObject::READ_DRAW_FRAMEBUFFER);
+
+        GLenum status = ext->glCheckFramebufferStatus(GL_FRAMEBUFFER_EXT);
+
+        if (status != GL_FRAMEBUFFER_COMPLETE_EXT)
+        {
+            GLuint fboId = state.getGraphicsContext() ? state.getGraphicsContext()->getDefaultFboId() : 0;
+            ext->glBindFramebuffer(GL_FRAMEBUFFER_EXT, fboId);
+            OSG_ALWAYS << "Error attaching FBO" << std::endl;
+            return;
+        }
+
+        // inform State that Texture attribute has changed due to compiling of FBO texture
+        // should OSG be doing this on its own?
+        state.haveAppliedTextureAttribute(state.getActiveTextureUnit(), osg::StateAttribute::TEXTURE);
+
+        for (size_t i = compositeMap.mCompiled; i < compositeMap.mDrawables.size(); ++i)
+        {
+            osg::Drawable* drw = compositeMap.mDrawables[i];
+            osg::StateSet* stateset = drw->getStateSet();
+
+            if (stateset)
+                renderInfo.getState()->pushStateSet(stateset);
+
+            renderInfo.getState()->apply();
+
+            glViewport(0, 0, compositeMap.mTexture->getTextureWidth(), compositeMap.mTexture->getTextureHeight());
+            drw->drawImplementation(renderInfo);
+
+            if (stateset)
+                renderInfo.getState()->popStateSet();
+
+            ++compositeMap.mCompiled;
+
+            compositeMap.mDrawables[i] = nullptr;
+        }
+        if (compositeMap.mCompiled == compositeMap.mDrawables.size())
+            compositeMap.mDrawables = std::vector<osg::ref_ptr<osg::Drawable>>();
+
+        state.haveAppliedAttribute(osg::StateAttribute::VIEWPORT);
+
+        GLuint fboId = state.getGraphicsContext() ? state.getGraphicsContext()->getDefaultFboId() : 0;
+        ext->glBindFramebuffer(GL_FRAMEBUFFER_EXT, fboId);
+    }
+
+    void CompositeMapRenderer::setMinimumTimeAvailableForCompile(double time)
+    {
+        mMinimumTimeAvailable = time;
+    }
+
+    void CompositeMapRenderer::setTargetFrameRate(float framerate)
+    {
+        mTargetFrameRate = framerate;
+    }
+
+    void CompositeMapRenderer::addCompositeMap(CompositeMap* compositeMap, bool immediate)
+    {
+        std::lock_guard<std::mutex> lock(mMutex);
+        if (immediate)
+            mImmediateCompileSet.insert(compositeMap);
+        else
+            mCompileSet.insert(compositeMap);
+    }
+
+    void CompositeMapRenderer::setImmediate(CompositeMap* compositeMap)
+    {
+        std::lock_guard<std::mutex> lock(mMutex);
+        CompileSet::iterator found = mCompileSet.find(compositeMap);
+        if (found == mCompileSet.end())
+            return;
+        else
+        {
+            mImmediateCompileSet.insert(compositeMap);
+            mCompileSet.erase(found);
+        }
+    }
+
+    size_t CompositeMapRenderer::getCompileSetSize() const
+    {
+        std::lock_guard<std::mutex> lock(mMutex);
+        return mCompileSet.size();
+    }
+
+    CompositeMap::CompositeMap()
+        : mCompiled(0)
+    {
+    }
+
+    CompositeMap::~CompositeMap() {}
+
+}

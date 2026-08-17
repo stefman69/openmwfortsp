@@ -1,0 +1,10 @@
+*.o
+*.a
+*.so
+*.so.*
+build/
+build-*/
+CMakeFiles/
+*.tar.gz
+*.before-*
+*.bak*

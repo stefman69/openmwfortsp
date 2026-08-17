@@ -1,0 +1,30 @@
+diff --git a/src/util.c b/src/util.c
+index 115be85..4cbe299 100644
+--- a/src/util.c
++++ b/src/util.c
+@@ -316,7 +316,9 @@ void emit(int fd, int type, int code, int val)
+     ev.time.tv_sec = 0;
+     ev.time.tv_usec = 0;
+ 
+-    write(fd, &ev, sizeof(ev));
++    if (write(fd, &ev, sizeof(ev)) != sizeof(ev)) {
++        perror("write");
++    }
+ }
+ 
+ 
+diff --git a/src/xbox360.c b/src/xbox360.c
+index 7c30654..3c067dc 100644
+--- a/src/xbox360.c
++++ b/src/xbox360.c
+@@ -102,7 +102,9 @@ void setupFakeXbox360Device()
+     UINPUT_SET_ABS_P(&device, ABS_Z, 0, 255, 0, 0);
+     UINPUT_SET_ABS_P(&device, ABS_RZ, 0, 255, 0, 0);
+ 
+-    write(fd, &device, sizeof(device));
++    if (write(fd, &device, sizeof(device)) != sizeof(device)) {
++        perror("write");
++    }
+ 
+     if (ioctl(fd, UI_DEV_CREATE)) {
+         printf("Unable to create UINPUT device.");
