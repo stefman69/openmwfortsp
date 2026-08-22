@@ -7,7 +7,6 @@
 #include <osg/Capability>
 #include <osg/ColorMaski>
 #include <osg/Group>
-#include <osg/Texture2D>
 #include <osg/Node>
 #include <osg/UserDataContainer>
 
@@ -61,10 +60,6 @@
 #include "imagemanager.hpp"
 #include "niffilemanager.hpp"
 #include "objectcache.hpp"
-#include <atomic>
-#include <chrono>
-#include <cstdint>
-#include <cstring>
 
 namespace
 {
@@ -136,77 +131,8 @@ namespace
     };
 }
 
-namespace
-{
-    // TSP_GL4ES_POT_SAFE_MIPMAPS_051_V8
-    bool tspIsPowerOfTwo(int value)
-    {
-        return value > 0 && (value & (value - 1)) == 0;
-    }
-
-    bool tspUsesMipmaps(osg::Texture::FilterMode mode)
-    {
-        return mode == osg::Texture::NEAREST_MIPMAP_NEAREST
-            || mode == osg::Texture::LINEAR_MIPMAP_NEAREST
-            || mode == osg::Texture::NEAREST_MIPMAP_LINEAR
-            || mode == osg::Texture::LINEAR_MIPMAP_LINEAR;
-    }
-
-    osg::Texture::FilterMode tspBaseFilter(osg::Texture::FilterMode mode)
-    {
-        if (mode == osg::Texture::NEAREST_MIPMAP_NEAREST
-            || mode == osg::Texture::NEAREST_MIPMAP_LINEAR)
-            return osg::Texture::NEAREST;
-
-        return osg::Texture::LINEAR;
-    }
-
-    osg::Texture::FilterMode tspSafeMinFilter(
-        osg::Texture* texture, osg::Texture::FilterMode requested)
-    {
-        if (!texture || !tspUsesMipmaps(requested))
-            return requested;
-
-        osg::Texture2D* texture2D = dynamic_cast<osg::Texture2D*>(texture);
-        if (!texture2D)
-            return tspBaseFilter(requested);
-
-        osg::Image* image = texture2D->getImage();
-        if (!image)
-            return tspBaseFilter(requested);
-
-        if (!tspIsPowerOfTwo(image->s()) || !tspIsPowerOfTwo(image->t()))
-            return tspBaseFilter(requested);
-
-        return requested;
-    }
-}
-
 namespace Resource
 {
-
-    namespace
-    {
-        // TSP_PERF_QUIET_HELPER_051_V20
-        bool tspV20DeepDebugEnabled()
-        {
-            static const bool enabled = [] {
-                const char* value = std::getenv("OPENMW_TSP_DEEP_DEBUG");
-
-                if (value == nullptr || *value == '\0')
-                    return false;
-
-                return !(std::strcmp(value, "0") == 0
-                    || std::strcmp(value, "false") == 0
-                    || std::strcmp(value, "off") == 0
-                    || std::strcmp(value, "no") == 0);
-            }();
-
-            return enabled;
-        }
-    }
-
-
     void TemplateMultiRef::addRef(const osg::Node* node)
     {
         mObjects.emplace_back(node);
@@ -245,7 +171,7 @@ namespace Resource
             {
                 for (const osg::ref_ptr<osg::Texture2D>& tex : flipctrl->getTextures())
                 {
-                    tex->setFilter(osg::Texture::MIN_FILTER, tspSafeMinFilter(tex.get(), mMinFilter));
+                    tex->setFilter(osg::Texture::MIN_FILTER, mMinFilter);
                     tex->setFilter(osg::Texture::MAG_FILTER, mMagFilter);
                     tex->setMaxAnisotropy(mMaxAnisotropy);
                 }
@@ -296,7 +222,7 @@ namespace Resource
             osg::Texture* tex = attr->asTexture();
             if (tex)
             {
-                tex->setFilter(osg::Texture::MIN_FILTER, tspSafeMinFilter(tex, mMinFilter));
+                tex->setFilter(osg::Texture::MIN_FILTER, mMinFilter);
                 tex->setFilter(osg::Texture::MAG_FILTER, mMagFilter);
                 tex->setMaxAnisotropy(mMaxAnisotropy);
             }
@@ -1223,8 +1149,7 @@ namespace Resource
 
     void SceneManager::applyFilterSettings(osg::Texture* tex)
     {
-        // TSP_GL4ES_POT_SAFE_MIPMAP_APPLY_051_V8
-        tex->setFilter(osg::Texture::MIN_FILTER, tspSafeMinFilter(tex, mMinFilter));
+        tex->setFilter(osg::Texture::MIN_FILTER, mMinFilter);
         tex->setFilter(osg::Texture::MAG_FILTER, mMagFilter);
         tex->setMaxAnisotropy(mMaxAnisotropy);
     }
@@ -1260,47 +1185,7 @@ namespace Resource
                     ++it;
             }
         }
-    
-        // TSP_PERF_QUIET_SCENE_GATE_051_V20
-        if (tspV20DeepDebugEnabled())
-        {
-        // TSP_MEMORY_SCENE_TRACE_051_V10
-        using TspSceneMemClock = std::chrono::steady_clock;
-        static std::atomic<std::int64_t> sTspLastSceneMemNs{ 0 };
-        const std::int64_t tspSceneNowNs
-            = std::chrono::duration_cast<std::chrono::nanoseconds>(
-                  TspSceneMemClock::now().time_since_epoch())
-                  .count();
-        std::int64_t tspSceneLastNs = sTspLastSceneMemNs.load(std::memory_order_relaxed);
-        constexpr std::int64_t TspSceneTraceIntervalNs = 10000000000LL;
-        if (tspSceneNowNs - tspSceneLastNs >= TspSceneTraceIntervalNs
-            && sTspLastSceneMemNs.compare_exchange_strong(
-                tspSceneLastNs, tspSceneNowNs, std::memory_order_relaxed))
-        {
-            std::size_t sharedTextures = 0;
-            std::size_t sharedStateSets = 0;
-            {
-                std::lock_guard<std::mutex> lock(mSharedStateMutex);
-                sharedTextures = mSharedStateManager->getNumSharedTextures();
-                sharedStateSets = mSharedStateManager->getNumSharedStateSets();
-            }
-
-            std::size_t compiling = 0;
-            if (mIncrementalCompileOperation)
-            {
-                std::lock_guard<OpenThreads::Mutex> lock(
-                    *mIncrementalCompileOperation->getToCompiledMutex());
-                compiling = mIncrementalCompileOperation->getToCompile().size();
-            }
-
-            Log(Debug::Info)
-                << "TSP MEMSCENE"
-                << " shared_textures=" << sharedTextures
-                << " shared_statesets=" << sharedStateSets
-                << " compiling=" << compiling;
-        }
-        }
-}
+    }
 
     void SceneManager::clearCache()
     {

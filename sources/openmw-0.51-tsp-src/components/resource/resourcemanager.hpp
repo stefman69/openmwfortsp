@@ -32,7 +32,6 @@ namespace Resource
         virtual void setExpiryDelay(double expiryDelay) = 0;
         virtual void reportStats(unsigned int frameNumber, osg::Stats* stats) const = 0;
         virtual void releaseGLObjects(osg::State* state) = 0;
-        virtual CacheStats getTspMemoryCacheStats() const { return {}; }
     };
 
     /// @brief Base class for managers that require a virtual file system and object cache.
@@ -65,8 +64,6 @@ namespace Resource
 
         const VFS::Manager* getVFS() const { return mVFS; }
 
-        // TSP_MEMORY_CACHE_STATS_ACCESSOR_051_V10
-        CacheStats getTspMemoryCacheStats() const override { return mCache->getStats(); }
         void reportStats(unsigned int frameNumber, osg::Stats* stats) const override {}
 
         void releaseGLObjects(osg::State* state) override { mCache->releaseGLObjects(state); }

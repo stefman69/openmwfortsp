@@ -1,4 +1,7 @@
 #include "stateupdater.hpp"
+#include <osgUtil/CullVisitor>
+#include <cstring>
+#include <cstdlib>
 
 #include <osg/Fog>
 #include <osg/LightModel>
@@ -14,6 +17,20 @@
 
 namespace SceneUtil
 {
+
+    // TSP_ADAPTIVE_DEPTH_UNIFORM_051_V17
+    bool tspV17AdaptiveDepthUniformEnabled()
+    {
+        const char* value = std::getenv("OPENMW_TSP_ADAPTIVE_DEPTH");
+        if (value == nullptr || *value == '\0')
+            return true;
+
+        return !(std::strcmp(value, "0") == 0
+            || std::strcmp(value, "false") == 0
+            || std::strcmp(value, "off") == 0
+            || std::strcmp(value, "no") == 0);
+    }
+
     PerViewUniformStateUpdater::PerViewUniformStateUpdater(Resource::SceneManager* sceneManager, int opaqueTextureUnit)
         : mSceneManager(sceneManager)
         , mOpaqueTextureUnit(opaqueTextureUnit)
@@ -29,7 +46,34 @@ namespace SceneUtil
 
     void PerViewUniformStateUpdater::apply(osg::StateSet* stateset, osg::NodeVisitor* nv)
     {
-        stateset->getUniform("projectionMatrix")->set(mProjectionMatrix);
+        // TSP_ADAPTIVE_DEPTH_UNIFORM_051_V17_ACTIVE
+        if (tspV17AdaptiveDepthUniformEnabled()
+            && !AutoDepth::isReversed()
+            && nv != nullptr
+            && nv->getVisitorType() == osg::NodeVisitor::CULL_VISITOR)
+        {
+            osgUtil::CullVisitor* cv
+                = static_cast<osgUtil::CullVisitor*>(nv);
+
+            const osg::RefMatrix* currentProjection
+                = cv->getProjectionMatrix();
+
+            if (currentProjection != nullptr)
+            {
+                stateset->getUniform("projectionMatrix")->set(
+                    osg::Matrixf(*currentProjection));
+            }
+            else
+            {
+                stateset->getUniform("projectionMatrix")->set(
+                    mProjectionMatrix);
+            }
+        }
+        else
+        {
+            stateset->getUniform("projectionMatrix")->set(
+                mProjectionMatrix);
+        }
         if (mSkyRTT && nv->getVisitorType() == osg::NodeVisitor::CULL_VISITOR)
         {
             osg::Texture* skyTexture = mSkyRTT->getColorTexture(static_cast<osgUtil::CullVisitor*>(nv));

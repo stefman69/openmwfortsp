@@ -9,13 +9,6 @@
 namespace Terrain
 {
 
-    // TSP_COMPOS_BUILD: greppable in the deployed binary, so "which composite map
-    // generation is actually running" stops being a guess. Bump the string whenever
-    // this file changes. The V8 claim is literal and asserted at patch time: this
-    // tree has no TspDrainEnd and no RAII guard in drawImplementation, so no GL call
-    // is issued on a frame with nothing to compile.
-    const char* volatile gBuildTag = "TSP_COMPOS_BUILD_V8_NO_DRAINEND";
-
     CompositeMapRenderer::CompositeMapRenderer()
         : mTargetFrameRate(120)
         , mMinimumTimeAvailable(0.0025)

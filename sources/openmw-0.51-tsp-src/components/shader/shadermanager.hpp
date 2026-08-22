@@ -11,6 +11,8 @@
 #include <vector>
 
 #include <osg/Program>
+#include <osg/Group>
+#include <osgUtil/IncrementalCompileOperation>
 #include <osg/Shader>
 #include <osg/ref_ptr>
 
@@ -51,6 +53,23 @@ namespace Shader
             osg::ref_ptr<osg::Shader> fragmentShader, const osg::Program* programTemplate = nullptr);
 
         const osg::Program* getProgramTemplate() const { return mProgramTemplate; }
+        /* TSP_SHADER_WARMDRAW: OSG links a program lazily and OSG's incremental
+           compile only ever links it - Mali defers ~236ms more until the first
+           real draw. This group holds a tiny throwaway drawable per new program
+           so that draw happens during the loading screen instead of mid-combat.
+           RenderingManager attaches it to the scene root. */
+        osg::Group* getWarmupGroup() { return mWarmupGroup.get(); }
+
+        /* TSP_SHADER_PRECOMPILE: OSG links an osg::Program lazily on first apply()
+           during draw. On Mali that first draw costs ~236ms of CPU, and the
+           instrumented run showed every program is created during the loading
+           screen while the stall lands mid-combat. Handing the ICO each new
+           program moves that compile into the load, using the same machinery
+           OpenMW already pumps for textures and geometry. */
+        void setIncrementalCompileOperation(osgUtil::IncrementalCompileOperation* ico)
+        {
+            mIncrementalCompileOperation = ico;
+        }
         void setProgramTemplate(const osg::Program* program) { mProgramTemplate = program; }
 
         /// Clone an osg::Program including bindUniformBlocks that osg::Program::clone does not copy for some reason.
@@ -109,6 +128,24 @@ namespace Shader
         typedef std::map<std::pair<osg::ref_ptr<osg::Shader>, osg::ref_ptr<osg::Shader>>, osg::ref_ptr<osg::Program>>
             ProgramMap;
         ProgramMap mPrograms;
+
+        /* TSP_SHADER_DEDUP: mShaders is keyed on the DefineMap, but many
+           different define maps generate byte-identical GLSL - unused texture
+           slots still contribute a UV index to the key while landing inside
+           "#if 0" in the output. Measured 98 shader objects for 31 unique
+           texts, one of them repeated 16 times, each duplicate costing Mali
+           ~137ms to link plus ~236ms on its first draw. This second cache is
+           keyed on the generated source so identical GLSL reuses one
+           osg::Shader; since mPrograms keys on shader pointers, duplicate
+           programs then collapse as well. */
+        typedef std::pair<int, std::string> SourceKey;
+        typedef std::map<SourceKey, osg::ref_ptr<osg::Shader>> SourceShaderMap;
+        SourceShaderMap mShadersBySource;
+        unsigned int mDedupHits = 0;
+        unsigned int mDedupMisses = 0;
+
+        osg::ref_ptr<osg::Group> mWarmupGroup = new osg::Group;
+        osg::ref_ptr<osgUtil::IncrementalCompileOperation> mIncrementalCompileOperation;
 
         typedef std::vector<osg::ref_ptr<osg::Shader>> ShaderList;
         typedef std::map<osg::ref_ptr<osg::Shader>, ShaderList> LinkedShadersMap;

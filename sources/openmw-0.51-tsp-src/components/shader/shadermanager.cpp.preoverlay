@@ -1,4 +1,4 @@
-#include <cstdio>
+#include "shadermanager.hpp"
 #include <osg/NodeCallback>
 #include <osg/PrimitiveSet>
 #include <osg/Array>
@@ -6,10 +6,7 @@
 #include <osg/ColorMask>
 #include <osg/Geometry>
 #include <osg/Geode>
-#include <osg/Node>
 #include <cstdlib>
-#include <ctime>
-#include "shadermanager.hpp"
 
 #include <algorithm>
 #include <cassert>
@@ -200,65 +197,18 @@ namespace
     class TspWarmupPrune : public osg::NodeCallback
     {
     public:
-        /* Runs on the GROUP. Each new program's warm node is added disabled;
-           we enable a few per frame so the ~236ms Mali charges per program is
-           spread over many frames instead of landing in one 3.4s freeze, and
-           retire each node once it has actually been drawn. */
         void operator()(osg::Node* node, osg::NodeVisitor* nv) override
         {
-            osg::Group* group = node->asGroup();
-            if (group)
+            if (++mSeen >= 2)
             {
-                int live = 0;
-                for (int i = static_cast<int>(group->getNumChildren()) - 1; i >= 0; --i)
-                {
-                    osg::Node* child = group->getChild(i);
-                    int age = 0;
-                    child->getUserValue("tspWarmAge", age);
-                    if (age < 0)
-                    {
-                        /* queued but not yet released */
-                        continue;
-                    }
-                    if (age >= 2)
-                        group->removeChildren(i, 1);
-                    else
-                    {
-                        child->setUserValue("tspWarmAge", age + 1);
-                        ++live;
-                    }
-                }
-                /* Each warm draw is an atomic ~240ms glDrawArrays, so it can only
-                   be spaced apart, never subdivided. Wait kCooldownFrames of
-                   normal rendering between releases so the hitches scatter
-                   across ~15s instead of clustering into one bad stretch. */
-                const int kPerFrame = 1;
-                const int kCooldownFrames = 0;
-                if (++mSinceRelease < kCooldownFrames)
-                {
-                    traverse(node, nv);
-                    return;
-                }
-                int released = 0;
-                for (unsigned int i = 0; i < group->getNumChildren() && released < kPerFrame; ++i)
-                {
-                    osg::Node* child = group->getChild(i);
-                    int age = 0;
-                    child->getUserValue("tspWarmAge", age);
-                    if (age < 0 && live == 0)
-                    {
-                        child->setNodeMask(~0u);
-                        child->setUserValue("tspWarmAge", 0);
-                        ++released;
-                        ++live;
-                        mSinceRelease = 0;
-                    }
-                }
+                for (unsigned int i = 0; i < node->getNumParents(); ++i)
+                    node->getParent(i)->removeChild(node);
+                return;
             }
             traverse(node, nv);
         }
     private:
-        int mSinceRelease = 0;
+        int mSeen = 0;
     };
 }
 
@@ -679,15 +629,6 @@ namespace Shader
     osg::ref_ptr<osg::Program> ShaderManager::getProgram(
         const std::string& templateName, const DefineMap& defines, const osg::Program* programTemplate)
     {
-        /* TSP_DEFINEDUMP: print the whole define map per program request so we
-           can see which permutations differ only in flags that are already
-           disabled (e.g. a UV index for a texture slot that is off). */
-        {
-            std::string tspAll;
-            for (const auto& d : defines)
-                tspAll += d.first + "=" + d.second + " ";
-            Log(Debug::Info) << "TSP_DEFINEDUMP " << templateName << " :: " << tspAll;
-        }
         auto vert = getShader(templateName + ".vert", defines);
         auto frag = getShader(templateName + ".frag", defines);
 
@@ -745,41 +686,19 @@ namespace Shader
                 osg::ref_ptr<osg::Geode> geode = new osg::Geode;
                 geode->addDrawable(geom);
                 geode->setCullingActive(false);
-                geode->setUserValue("tspWarmAge", -1);
-                geode->setNodeMask(0u);
-                if (mWarmupGroup->getNumChildren() == 0
-                    && !mWarmupGroup->getUpdateCallback())
-                    mWarmupGroup->addUpdateCallback(new TspWarmupPrune);
+                geode->addUpdateCallback(new TspWarmupPrune);
                 mWarmupGroup->addChild(geode);
                 Log(Debug::Info) << "TSP_WARMDRAW queued program n=" << mPrograms.size();
             }
 
             /* TSP_SHADER_PRECOMPILE: compile now, during the loading screen, rather
                than letting OSG link on first draw in the middle of combat. */
-            if (!mIncrementalCompileOperation)
-                Log(Debug::Info) << "TSP_PRECOMPILE skipped: no ICO";
-            else if (std::getenv("TSP_NO_SHADER_PRECOMPILE"))
-                Log(Debug::Info) << "TSP_PRECOMPILE skipped: disabled by env";
             if (mIncrementalCompileOperation && !std::getenv("TSP_NO_SHADER_PRECOMPILE"))
             {
-                /* Hand OSG a throwaway node carrying this program and let the
-                   ICO build the compile map itself. Constructing a CompileSet by
-                   hand and passing callBuildCompileMap=false leaves
-                   _numberCompileListsToCompile at zero, so the set reports itself
-                   already complete and the merge path dereferences the
-                   _subgraphToCompile we never set - signal 11 at a tiny address. */
-                /* A bare osg::Node carries no drawable, so StateToCompile's
-                   visitor never reaches its stateset and the ICO faults.
-                   A Geode holding an empty Geometry is the shape OSG's
-                   compile traversal actually expects. */
-                osg::ref_ptr<osg::Geometry> compileGeom = new osg::Geometry;
-                compileGeom->setUseDisplayList(false);
-                compileGeom->getOrCreateStateSet()->setAttributeAndModes(
-                    program, osg::StateAttribute::ON);
-                osg::ref_ptr<osg::Geode> compileNode = new osg::Geode;
-                compileNode->addDrawable(compileGeom);
-                mIncrementalCompileOperation->add(compileNode.get());
-                Log(Debug::Info) << "TSP_PRECOMPILE queued program n=" << mPrograms.size();
+                osg::ref_ptr<osgUtil::IncrementalCompileOperation::CompileSet> compileSet
+                    = new osgUtil::IncrementalCompileOperation::CompileSet;
+                compileSet->add(program.get());
+                mIncrementalCompileOperation->add(compileSet, false);
             }
         }
         return found->second;
@@ -870,13 +789,11 @@ namespace Shader
 
     int ShaderManager::reserveGlobalTextureUnits(Slot slot, int count)
     {
+        // TODO: Reuse units when count increase forces reallocation
+        // TODO: Warn if trampling on the ~8 units needed by model textures
         auto unit = mReservedTextureUnitsBySlot[static_cast<int>(slot)];
         if (unit.index >= 0 && unit.count >= count)
             return unit.index;
-
-        // Release old units before reallocating (supports runtime cascade count changes)
-        if (unit.index >= 0)
-            mReservedTextureUnits -= unit.count;
 
         if (getAvailableTextureUnits() < count + 1)
             throw std::runtime_error("Can't reserve texture unit; no available units");

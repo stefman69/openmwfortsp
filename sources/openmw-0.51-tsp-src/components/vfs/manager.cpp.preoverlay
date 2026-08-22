@@ -1,7 +1,4 @@
 #include "manager.hpp"
-#include <cstdlib>
-#include <ctime>
-#include <cstdio>
 
 #include <cassert>
 #include <stdexcept>
@@ -129,47 +126,8 @@ namespace VFS
         return { mIndex.begin(), mIndex.end() };
     }
 
-    
-/* TSP_VFS_TRACE: log every asset the VFS is asked for, with a timestamp and
-   how long the lookup took. This is the single funnel all mesh, texture and
-   sound requests pass through, so it names files definitively rather than
-   guessing from naming conventions. Enable with OPENMW_TSP_VFSLOG=<path>. */
-namespace {
-    void tsp_vfs_log(std::string_view name, double ms)
+    Files::IStreamPtr Manager::findNormalized(std::string_view normalizedPath) const
     {
-        static FILE* f = nullptr;
-        static bool checked = false;
-        if (!checked) {
-            checked = true;
-            const char* p = getenv("OPENMW_TSP_VFSLOG");
-            if (p && p[0]) f = fopen(p, "w");
-        }
-        if (!f) return;
-        struct timespec ts;
-        clock_gettime(CLOCK_MONOTONIC, &ts);
-        double now = ts.tv_sec * 1000.0 + ts.tv_nsec / 1000000.0;
-        fprintf(f, "%.1f %6.2fms %.*s\n", now, ms,
-                (int)name.size(), name.data());
-        static int n = 0;
-        if ((++n & 0x1f) == 0) fflush(f);
-    }
-}
-
-Files::IStreamPtr Manager::findNormalized(std::string_view normalizedPath) const
-    {
-    struct timespec tsp_t0;
-    clock_gettime(CLOCK_MONOTONIC, &tsp_t0);
-    struct TspGuard {
-        std::string_view n; struct timespec t0;
-        ~TspGuard() {
-            struct timespec t1;
-            clock_gettime(CLOCK_MONOTONIC, &t1);
-            double ms = (t1.tv_sec - t0.tv_sec) * 1000.0
-                      + (t1.tv_nsec - t0.tv_nsec) / 1000000.0;
-            tsp_vfs_log(n, ms);
-        }
-    } tsp_guard{normalizedPath, tsp_t0};
-
         assert(Path::isNormalized(normalizedPath));
         const auto it = mIndex.find(normalizedPath);
         if (it == mIndex.end())

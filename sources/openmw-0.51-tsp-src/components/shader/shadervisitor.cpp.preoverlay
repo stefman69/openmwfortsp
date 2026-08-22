@@ -1,5 +1,4 @@
 #include "shadervisitor.hpp"
-#include <cstdlib>
 
 #include <set>
 #include <unordered_map>
@@ -721,17 +720,6 @@ namespace Shader
 
         defineMap["softParticles"] = reqs.mSoftParticles ? "1" : "0";
 
-        /* TSP_NO_ENVMAP: environment mapping is one of only six genuinely
-           distinct objects shader variants on this device, and each variant
-           costs Mali ~90ms to link plus ~240ms on its first draw. The shiny
-           metal/glass reflection it produces is barely visible at handheld
-           size, so trading it for ~380ms of load stall is worth testing.
-           Set TSP_KEEP_ENVMAP=1 to restore it without rebuilding. */
-        if (!std::getenv("TSP_KEEP_ENVMAP") && defineMap["envMap"] != "0")
-        {
-            defineMap["envMap"] = "0";
-            defineMap["envMapUV"] = "0";
-        }
         Stereo::shaderStereoDefines(defineMap);
 
         std::string shaderPrefix;
