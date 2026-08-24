@@ -41,6 +41,7 @@ bbfe1b6 replay2: tsp_ring_arm_v3.py (exit 0, markers 177)
 62db98e replay2: tsp_ring_arm_v2.py (exit 0, markers 168)
 
 ### /root/gl4es-tsps
+39f8e0b TSP: maxcolorattach RTT colour-attachment fix, always-reattach, instrument hooks
 81547d9 Merge pull request #513 from FWGS/master
 
 ### /root/osg

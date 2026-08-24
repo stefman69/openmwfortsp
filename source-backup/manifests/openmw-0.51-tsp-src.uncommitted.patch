@@ -1,0 +1,87 @@
+diff --git a/components/sceneutil/lightmanager.cpp b/components/sceneutil/lightmanager.cpp
+index 845236d..f0e2568 100644
+--- a/components/sceneutil/lightmanager.cpp
++++ b/components/sceneutil/lightmanager.cpp
+@@ -1,3 +1,5 @@
++#include <iostream>   // TSP_LIGHTSIMPLE_V2
++#include <cstdlib>    // TSP_LIGHTSIMPLE_V2
+ #include "lightmanager.hpp"
+ 
+ #include <algorithm>
+@@ -868,8 +870,75 @@ namespace SceneUtil
+     {
+         if (getLightingMethod() == LightingMethod::PerObjectUniform)
+         {
++            /* TSP_LIGHTSIMPLE_V2 - collapse per-object light lists, then cache.
++               V1 added a cache here and it could not help: with 8 lights in a
++               room every drawable gets a DIFFERENT list ([7,12], [7,12,19],
++               [12,19] ...) so two drawables essentially never share a key.
++               Truncating the list to N lights collapses the number of distinct
++               lists to roughly the number of lights, which is what finally lets
++               the cache hit and lets RenderBin group by stateset.
++               TSP_LIGHT_SIMPLE=0  upstream, full per-object lists (default)
++                                1  keep the N nearest lights (TSP_LIGHT_SIMPLE_N,
++                                   default 1) - the PS1 look
++                                2  no point lights at all, ambient and sun only.
++                                   This is the CEILING TEST: it is the fastest
++                                   any lighting change can possibly be. If the
++                                   frame does not move at 2, lighting is not the
++                                   cost and this whole line of attack is wrong.
++               Safe to share a stateset: fade is applied once per light per frame
++               under the getLastAppliedFrame() guard and measured light-to-camera,
++               not light-to-drawable, and LightSourceViewBound holds no per-object
++               data. generate() does bake mViewMatrix into light positions, so the
++               view matrix is part of the cache generation; it changes once per
++               render stage (main, water reflection, water refraction, shadows).
++               Function-local statics rather than members: touching the header
++               rebuilds every consumer, this rebuilds one translation unit.
++               Unguarded like the cache below, sound under
++               OSG_THREADING=SingleThreaded (launcher line 61). */
++            static int sTspMode = -1;
++            static size_t sTspN = 1;
++            static LightStateSetMap sTspCache;
++            static osg::Matrix sTspView;
++            static size_t sTspFrame = static_cast<size_t>(-1);
++            static long sTspHit = 0, sTspMiss = 0;
++            if (sTspMode < 0)
++            {
++                const char* e = getenv("TSP_LIGHT_SIMPLE");
++                sTspMode = e ? atoi(e) : 0;
++                const char* f = getenv("TSP_LIGHT_SIMPLE_N");
++                if (f && atoi(f) > 0) sTspN = static_cast<size_t>(atoi(f));
++                std::cerr << "TSP_LIGHTSIMPLE_V2 mode=" << sTspMode << " n=" << sTspN
++                          << " (0=upstream 1=truncate 2=ambient-only)" << std::endl;
++            }
++            LightList tspList = lightList;
++            if (sTspMode >= 2)
++                tspList.clear();
++            else if (sTspMode == 1 && tspList.size() > sTspN)
++                tspList.resize(sTspN);
++            if (sTspFrame != frameNum || sTspView != *viewMatrix)
++            {
++                sTspCache.clear();
++                sTspFrame = frameNum;
++                sTspView = *viewMatrix;
++            }
++            LightIdList tspIds;
++            tspIds.reserve(tspList.size());
++            std::transform(tspList.begin(), tspList.end(), std::back_inserter(tspIds),
++                [](const LightSourceViewBound* l) { return l->mLightSource->getId(); });
++            auto tspFound = sTspCache.find(tspIds);
++            if (tspFound != sTspCache.end())
++            {
++                if (++sTspHit % 20000 == 0)
++                    std::cerr << "TSP_LIGHTSIMPLE_V2 hit=" << sTspHit << " miss=" << sTspMiss
++                              << " ratio=" << (double)sTspHit / (double)(sTspHit + sTspMiss)
++                              << std::endl;
++                return tspFound->second;
++            }
++            ++sTspMiss;
+             mStateSetGenerator->mViewMatrix = *viewMatrix;
+-            return mStateSetGenerator->generate(lightList, frameNum);
++            osg::ref_ptr<osg::StateSet> tspSs = mStateSetGenerator->generate(tspList, frameNum);
++            sTspCache.emplace(std::move(tspIds), tspSs);
++            return tspSs;
+         }
+ 
+         // possible optimization: return a StateSet containing all requested lights plus some extra lights (if a

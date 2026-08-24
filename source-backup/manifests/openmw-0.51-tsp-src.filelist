@@ -88,6 +88,7 @@ components/detournavigator/navigator.cpp
 components/resource/resourcemanager.hpp
 components/resource/resourcesystem.cpp
 components/resource/scenemanager.cpp
+components/sceneutil/lightmanager.cpp
 components/sceneutil/rtt.cpp
 components/sceneutil/stateupdater.cpp
 components/sceneutil/waterutil.cpp
