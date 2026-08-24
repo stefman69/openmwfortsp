@@ -1,0 +1,87 @@
+### /root/openmw-0.51-tsp-src
+f4d68a4 TSP_RTT_INIT_PATTERN: default RTT fill back to transparent
+7a49d99 TSP_RTT_PATTERN_V57: readable RTT init fill
+76f712d TSP_RTT_INIT_TEXARRAY_V56: Log channel + cover the texture-array path
+d411a7e TSP_RTT_INIT_TEXTURE_V55: zero-fill RTT colour textures
+e9f1727 TSP_DROPDOWN_FONT_051_V56
+78823f5 TSP_FONT_SIZES_051_V55: per-area font sizes in settings.cfg
+900d33b TSP_MAINMENU_ACTIVATE_051_V54: A activates the focused button
+1d82f18 TSP_A_DOUBLE_PRESS_051_V53: A activates on the first press
+1cccc09 TSP_TEXT_INDICATOR_051_V52: letter box follows the helper
+f022d83 TSP_TEXT_HANDOFF_051_V51: helper owns MENU, R3 forces text back
+90c15a9 TSP_TEXT_TOGGLE_051_V50: text automatic, MENU dismisses
+1224c61 TSP_INPUT_MODE_051_V49: MENU owns text, L3 owns the mouse
+8f956b7 TSP_CURSOR_POLICY_051_V48: real cursor + placement policy
+ca1a29f TSP_VISIBLE_CURSOR_051_V47: drawn cursor + handshake fix
+6cc8a7d TSP_SETTINGS_CURSOR_RESTORE_051_V46: settings pointer
+192b687 auto: pre-V53 snapshot
+204ea5c auto: pre-V51 snapshot
+dde2154 auto: pre-V50 snapshot
+03d9b04 auto: pre-build snapshot
+39ef4a4 auto: pre-build snapshot
+35751e1 auto: pre-build snapshot
+e55e1b5 revert compos drain budget - cost 8 fps by raising availableTime 2.5ms -> 12ms
+c51f114 auto: pre-build snapshot
+5c2e5d8 auto: pre-build snapshot
+9ec3484 auto: pre-build snapshot
+be0d1d9 auto: pre-build snapshot
+aa0815d auto: pre-build snapshot
+692af18 restore point: before shader/resource resync
+81e0680 V38-V43 controller/input chain, SafeNav navigator gate, compos build tag
+17cb11d restore point: before patch replay
+6b3c52e restore point: before maskedoc wiring
+8d93824 cut abandoned gradual-purge reference from scenemanager
+faa57a9 overlay v2 + patcher re-run
+22e3408 replay2: tsp_patch_v39.py (exit 0, markers 178)
+b591e0f replay2: tsp_terrain_lead_v1.py (exit 0, markers 178)
+9811d8f replay2: tsp_terrain_async_v1.py (exit 0, markers 178)
+2371208 replay2: tsp_prof_fix_v5.py (exit 0, markers 178)
+1315cec replay2: tsp_prof_fix_v4.py (exit 0, markers 178)
+bbfe1b6 replay2: tsp_ring_arm_v3.py (exit 0, markers 177)
+62db98e replay2: tsp_ring_arm_v2.py (exit 0, markers 168)
+
+### /root/gl4es-tsps
+81547d9 Merge pull request #513 from FWGS/master
+
+### /root/osg
+638f0a1e7 Merge pull request #47 from Duron27-org/GLES_3
+a7bc57f99 Add support for GLES3 dynamic loading
+8aa8d9174 Merge pull request #43 from a17r/cmake
+76345671a FindRSVG.cmake: Fix CMake warnings
+89bbe4c05 FindPoppler-glib.cmake: Fix CMake warnings
+952d59e8d FindGTA.cmake: Fix CMake warnings
+640cf8537 Cleanup superfluous overarching NOT ANDROID conditional
+170dae51d Merge pull request #42 from a17r/gnuinstalldirs
+ff1a0946b Also propagate relative include dir to pkgconfig files
+05e38b135 Fully embrace GNUInstallDirs
+747fba94e Merge pull request #39 from Capostrophic/unused
+a9de15657 Merge pull request #40 from a17r/cmake
+2b7b5ef99 Merge pull request #37 from kartoffels123/3.6
+8b255c141 added definition
+41a574af1 Cleanup legacy CMake endif() conditions
+ff48f625f Build examples only if NOT ANDROID
+ce942ab2f Cleanup legacy CMake else() conditions
+06d1cff0e Cleanup FATAL_ERROR from cmake_minimum_required
+ae5597d1f Check for POLICY CMP0069 directly instead of cmake_policy()
+fa7d0d45e Fix unused parameter warnings in GraphicsObjectManager
+081217588 Merge pull request #38 from a17r/cmake
+21449e2aa small warning message update.
+b5fc56baf Use more GNUInstalldirs (CMAKE_INSTALL_DOCDIR)
+b203287da FindCOLLADA.cmake: Fix ELSEIF() w/o argument warning in CMake-4.1.0
+8b723fa17 Fix DDS file origin handling in ReaderWriterDDS
+b19438429 Addresses Review: dxtctool reverted to upstream most logic moved to osg::Image (isBPTC, warnings, early out) ReaderWriterDDS is cleaned up
+61a4c88d5 Merge pull request #36 from AnyOldName3/cmake-that-is-still-supported
+a51b93877 Merge branch '3.6' of https://github.com/kartoffels123/osg into 3.6
+5869cd43c needed for build to have BPTC
+2a4428642 Merge branch 'OpenMW:3.6' into 3.6
+d5fe0927b Require CMake 3.5
+d47cd6ace Fix CMP0065
+4d04feabd Remove line that was missed
+90fe0c5c6 Require CMake 3.2
+cd27a53c6 Require CMake 3.0
+5ef44714f Fix CMP0037
+4d56486ee Get rid of check for nonexistent variable
+1a88c5480 Get rid of ancient version-checking macro
+45ba4259e Fix CMP0026
+537e5fe70 Fix PDB regression
+

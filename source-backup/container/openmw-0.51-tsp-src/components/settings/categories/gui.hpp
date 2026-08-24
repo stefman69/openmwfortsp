@@ -1,0 +1,68 @@
+#ifndef OPENMW_COMPONENTS_SETTINGS_CATEGORIES_GUI_H
+#define OPENMW_COMPONENTS_SETTINGS_CATEGORIES_GUI_H
+
+#include <components/settings/sanitizerimpl.hpp>
+#include <components/settings/settingvalue.hpp>
+
+#include <osg/Math>
+#include <osg/Vec2f>
+#include <osg/Vec3f>
+
+#include <MyGUI_Colour.h>
+
+#include <string_view>
+
+namespace Settings
+{
+    struct GUICategory : WithIndex
+    {
+        using WithIndex::WithIndex;
+
+        SettingValue<float> mScalingFactor{ mIndex, "GUI", "scaling factor", makeClampSanitizerFloat(0.5f, 8) };
+        // TSP_LARGE_FONT_RANGE_051_V35_2
+        SettingValue<int> mFontSize{ mIndex, "GUI", "font size", makeClampSanitizerInt(12, 32) };
+        // TSP_FONT_SIZES_051_V55 -- per-area overrides. Every one of these MUST
+        // also exist in files/settings-default.cfg or OpenMW throws at
+        // startup (settings.cpp:200). The 8..40 range is deliberately
+        // wider than the global 12..32 so small UI furniture can go below
+        // the body-text minimum.
+        SettingValue<int> mTspTitleFontSize{ mIndex, "GUI", "window title font size",
+            makeClampSanitizerInt(8, 40) };
+        SettingValue<int> mTspItemCountFontSize{ mIndex, "GUI", "item count font size",
+            makeClampSanitizerInt(8, 40) };
+        SettingValue<int> mTspStatsFontSize{ mIndex, "GUI", "stats font size",
+            makeClampSanitizerInt(8, 40) };
+        SettingValue<int> mTspSkillListFontSize{ mIndex, "GUI", "skill list font size",
+            makeClampSanitizerInt(8, 40) };
+        SettingValue<int> mTspControlsFontSize{ mIndex, "GUI", "controls font size",
+            makeClampSanitizerInt(8, 40) };
+        SettingValue<int> mTspTooltipChargeFontSize{ mIndex, "GUI", "tooltip charge font size",
+            makeClampSanitizerInt(8, 40) };
+        SettingValue<int> mTspLoadingFontSize{ mIndex, "GUI", "loading font size",
+            makeClampSanitizerInt(8, 40) };
+        SettingValue<float> mMenuTransparency{ mIndex, "GUI", "menu transparency", makeClampSanitizerFloat(0, 1) };
+        SettingValue<float> mTooltipDelay{ mIndex, "GUI", "tooltip delay", makeMaxSanitizerFloat(0) };
+        SettingValue<bool> mStretchMenuBackground{ mIndex, "GUI", "stretch menu background" };
+        SettingValue<bool> mControllerMenus{ mIndex, "GUI", "controller menus" };
+        SettingValue<int> mControllerTriggerPressThreshold{ mIndex, "GUI", "controller trigger press",
+            makeClampSanitizerInt(1, 32767) };
+        SettingValue<int> mControllerTriggerReleaseThreshold{ mIndex, "GUI", "controller trigger release",
+            makeClampSanitizerInt(0, 32766) };
+        SettingValue<bool> mControllerTooltips{ mIndex, "GUI", "controller tooltips" };
+        SettingValue<bool> mSubtitles{ mIndex, "GUI", "subtitles" };
+        SettingValue<bool> mHitFader{ mIndex, "GUI", "hit fader" };
+        SettingValue<bool> mWerewolfOverlay{ mIndex, "GUI", "werewolf overlay" };
+        SettingValue<MyGUI::Colour> mColorBackgroundOwned{ mIndex, "GUI", "color background owned" };
+        SettingValue<MyGUI::Colour> mColorCrosshairOwned{ mIndex, "GUI", "color crosshair owned" };
+        SettingValue<bool> mKeyboardNavigation{ mIndex, "GUI", "keyboard navigation" };
+        SettingValue<bool> mColorTopicEnable{ mIndex, "GUI", "color topic enable" };
+        SettingValue<MyGUI::Colour> mColorTopicSpecific{ mIndex, "GUI", "color topic specific" };
+        SettingValue<MyGUI::Colour> mColorTopicSpecificOver{ mIndex, "GUI", "color topic specific over" };
+        SettingValue<MyGUI::Colour> mColorTopicSpecificPressed{ mIndex, "GUI", "color topic specific pressed" };
+        SettingValue<MyGUI::Colour> mColorTopicExhausted{ mIndex, "GUI", "color topic exhausted" };
+        SettingValue<MyGUI::Colour> mColorTopicExhaustedOver{ mIndex, "GUI", "color topic exhausted over" };
+        SettingValue<MyGUI::Colour> mColorTopicExhaustedPressed{ mIndex, "GUI", "color topic exhausted pressed" };
+    };
+}
+
+#endif
