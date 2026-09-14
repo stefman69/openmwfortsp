@@ -2,8 +2,88 @@
 
 When I saw that someone had made a portmaster port for Morrowind I was really excited to put it on my TSPS, but then I found out it likely would not work on the TSP or even if I did install Knulli OS to be able to run it that it would not run very well. Morrowind is my favorite game of all time though, so I thought there has to be a way to get this working. What I initially thought would be just a reworking of the SH launcher file for the game turned into a massive undertaking of retuning the source code for OpenMW and building a binary that actually ran well on this system. Currently this game is playable only on the TrimUI Smart Pro and TrimUI Smart Pro S running either stock OS or Crossmix, though it will likely work on other OS's when I have the time and money to buy new SD cards and patch for them (it may work already, but I can't garauntee that). Instructions for installing the game and a full list of all major changes to stock OpenMW 0.51 is listed below.
 
+## Installation
 
-## What changed, and why
+1. Files need to be placed into two separate directories
+
+-The openmw folder should be placed in Data/ports on your SD card.
+-The Morrowind.sh and the OpenMW_Manager.sh should be placed in Roms/PORTS
+
+2. You will need to copy all files from your Morrowind game folder to Data/ports/openmw/Data
+
+3. The OpenMW_Manager must be run in order to install all compatibility files. It will take up about 1.5 gb on the internal drive and take about an hour to setup.
+
+-Open the OpenMW_Manager.sh in your ports folder (you may need to refresh your roms using the menu button)
+-After it loads select the Setup Storage option
+-In the Setup Storage sub menu select the Setup Game For First Launch option
+-Wait for the setup process to complete
+
+## Game controls
+
+There are multiple control sets for the game for in game play and navigating menus
+
+1. Main in-game
+Input	      Action
+Left stick	Move
+Right stick	Look / camera
+A	           Activate
+B	           Inventory
+X	           Ready weapon
+Y	           Ready magic
+LB	         Journal
+RB	         Rest
+L3	         Toggle crouch / sneak (can be set to hold in the script menu)
+R3	         Toggle view (1st / 3rd person)
+SELECT	     Pause / game menu
+MENU (tap)	 Nothing — it's the chord key
+
+2. MENU button + button, in game
+Chord	    Action
+MENU + A / B / X / Y	      Quick slots 1–4
+MENU + right stick ↑ ← ↓ →	Quick slots 5–8
+MENU + R3	                  Quick slot 9 (only for TSPS)
+MENU + RB	                  Quick-keys menu
+MENU + LB	                  Screenshot
+MENU + LT	                  Quicksave
+MENU + RT	                  Quickload
+
+3. Menus — CONTROLLER (default)
+Input	       Action
+D-pad	       Navigate
+A	           Select
+B	           Back / close
+Right Stick	 Scroll (where available)
+Left Stick   Toggle mouse controls
+LB / RB	     Change menu
+LT / RT	     Cycle active window
+MENU	       Toggle text controls (where a text field exists)
+SELECT	     Close menu
+
+4. Menus — MOUSE
+Input	       Action
+Left stick	 Move pointer
+A	           Click
+B	           Back / close
+Right stick	 Scroll
+L3 or MENU	 Return to controller controls
+
+Settings always has a pointer without toggling; it never appears in gameplay, loading screens, or the main/pause menu.
+
+5. Menus — TEXT (on-screen keyboard)
+Input	          Action
+Up / Down	      Select character
+Left	          Backspace
+Right	          Cursor forward
+A	              Type
+B	              Cancel/Exit
+X	              Character set (letters vs numbers)
+Y	              Case
+START	          Enter / accept
+MENU	          Return to controller controls
+Left stick	    Toggle mouse controls
+
+
+## All major code changes from stock OpenMW
 
 ### Rendering path
 
