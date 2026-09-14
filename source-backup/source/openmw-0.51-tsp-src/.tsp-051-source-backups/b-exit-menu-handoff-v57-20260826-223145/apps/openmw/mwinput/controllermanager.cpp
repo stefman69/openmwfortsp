@@ -1,0 +1,1297 @@
+#include "controllermanager.hpp"
+
+#include <MyGUI_Button.h>
+#include <MyGUI_InputManager.h>
+
+#include <SDL.h>
+
+// TSP_CHORD_051_V42 -- std::_Exit / std::fflush for the exit-chord fallback.
+#include <cstdio>
+#include <cstdlib>
+
+#include <components/debug/debuglog.hpp>
+#include <components/esm/refid.hpp>
+#include <components/files/conversion.hpp>
+#include <components/sdlutil/sdlmappings.hpp>
+#include <components/settings/values.hpp>
+
+#include "../mwbase/environment.hpp"
+#include "../mwbase/inputmanager.hpp"
+#include "../mwbase/luamanager.hpp"
+#include "../mwbase/statemanager.hpp"
+#include "../mwbase/windowmanager.hpp"
+#include "../mwgui/windowbase.hpp"
+
+#include "actions.hpp"
+#include "bindingsmanager.hpp"
+#include "mousemanager.hpp"
+
+namespace MWInput
+{
+    namespace
+    {
+        // TSP_MOUSE_MODE_051_V41 -- longest gap between two MENU taps that still
+        // counts as a double tap. Named constant so retuning is a one-token sed.
+        constexpr unsigned int sTspMenuDoubleTapMs = 400;
+        // TSP_INPUT_MODE_051_V49 -- the TEXT/CONTROLLER mode IS this file. The
+        // text helper holds EVIOCGRAB only while it exists, so writing and
+        // removing it is how the engine drives the helper. One copy of the state,
+        // shared by both processes, so they cannot disagree about the mode.
+        const char* const sTspTextFlag = "/tmp/openmw-tsp-text-active";
+        const char* const sTspHelperYieldFlag = "/tmp/openmw-tsp-mouse-mode";
+
+        // TSP_NO_STICKCLICK_MODES_051_V54
+        // V51 deliberately made sTspHelperYieldFlag mean only "the helper
+        // yielded the controller". Do not overload that flag with mouse state
+        // again. These two files give the no-stick-click path an explicit,
+        // one-way request plus an engine-owned acknowledgement.
+        const char* const sTspMouseRequestFlag = "/tmp/openmw-tsp-mouse-request";
+        const char* const sTspMouseActiveFlag = "/tmp/openmw-tsp-mouse-active";
+        constexpr Sint16 sTspMouseWakeAxisThreshold = 8000;
+        // TSP_TEXT_TOGGLE_051_V50 -- "the user asked for controller nav in this
+        // menu". Text is automatic; this is the dismiss. Cleared whenever the
+        // active window changes, so it never leaks between menus.
+        const char* const sTspTextOffFlag = "/tmp/openmw-tsp-text-off";
+
+        // TSP_TEXT_EXIT_LATCH_051_V56
+        // B from helper TEXT creates this stronger latch. Unlike an ordinary
+        // MENU suppression, it survives the immediate controller-window change
+        // and is released only after the text field genuinely stops being active.
+        const char* const sTspTextExitLatchFlag = "/tmp/openmw-tsp-text-exit-latch";
+        bool tspTextExitLatched()
+        {
+            if (std::FILE* tspFile = std::fopen(sTspTextExitLatchFlag, "r"))
+            {
+                std::fclose(tspFile);
+                return true;
+            }
+            return false;
+        }
+
+        bool tspTextSuppressed()
+        {
+            if (std::FILE* tspFile = std::fopen(sTspTextOffFlag, "r"))
+            {
+                std::fclose(tspFile);
+                return true;
+            }
+            return false;
+        }
+        void tspSetTextSuppressed(bool off)
+        {
+            if (off)
+            {
+                if (std::FILE* tspFile = std::fopen(sTspTextOffFlag, "w"))
+                {
+                    std::fputs("1\n", tspFile);
+                    std::fclose(tspFile);
+                }
+            }
+            else
+            {
+                std::remove(sTspTextOffFlag);
+            }
+            Log(Debug::Info) << "TSP_TEXT_TOGGLE_051_V50 textSuppressed=" << (off ? 1 : 0);
+        }
+        bool tspTextModeOn()
+        {
+            if (std::FILE* tspFile = std::fopen(sTspTextFlag, "r"))
+            {
+                std::fclose(tspFile);
+                return true;
+            }
+            return false;
+        }
+        void tspSetTextMode(bool on)
+        {
+            if (on)
+            {
+                if (std::FILE* tspFile = std::fopen(sTspTextFlag, "w"))
+                {
+                    std::fputs("1\n", tspFile);
+                    std::fclose(tspFile);
+                }
+            }
+            else
+            {
+                std::remove(sTspTextFlag);
+            }
+            Log(Debug::Info) << "TSP_INPUT_MODE_051_V49 textMode=" << (on ? 1 : 0);
+        }
+
+        // TSP_CHORD_051_V42 -- MENU-hold chord layer. All one-token retunable.
+        //
+        // NOTE ON THE EXIT BUTTON: this pad's gamecontrollerdb crosses START and
+        // SELECT (back:b7 where b7 = evdev 315 = physical START). So
+        // SDL_CONTROLLER_BUTTON_BACK is the physical START key.
+        constexpr int sTspChordExitButton = SDL_CONTROLLER_BUTTON_BACK;
+
+        // Quick slots / save / load / screenshot are gameplay-only so they cannot
+        // collide with menu controls. The exit chord ignores this.
+        constexpr bool sTspChordsInMenus = false;
+
+        constexpr float sTspChordStickThreshold = 0.6f;
+        constexpr float sTspChordTriggerThreshold = 0.5f;
+
+        // Clean quit first; if the main loop has not torn down by then, hard exit.
+        constexpr unsigned int sTspChordExitKillMs = 3000;
+    }
+
+    ControllerManager::ControllerManager(BindingsManager* bindingsManager, MouseManager* mouseManager,
+        const std::filesystem::path& userControllerBindingsFile, const std::filesystem::path& controllerBindingsFile)
+        : mBindingsManager(bindingsManager)
+        , mMouseManager(mouseManager)
+        , mGyroAvailable(false)
+        , mGamepadGuiCursorEnabled(true)
+        , mGuiCursorEnabled(true)
+        , mJoystickLastUsed(false)
+        , mGamepadMousePressed(false)
+        , mLeftTriggerGuiPressed(false)
+        , mRightTriggerGuiPressed(false)
+        // TSP_MOUSE_MODE_051_V38
+        , mTspMouseMode(false)
+        // TSP_MOUSE_MODE_051_V41
+        , mTspLastMenuTapMs(0)
+        , mTspLastTopWindow(nullptr)
+        // TSP_CHORD_051_V42
+        , mTspMenuHeld(false)
+        , mTspChordConsumed(false)
+        , mTspChordStickDir(0)
+        , mTspChordLtLatched(false)
+        , mTspChordRtLatched(false)
+        , mTspQuitDeadlineMs(0)
+    {
+        if (!controllerBindingsFile.empty())
+        {
+            const int result
+                = SDL_GameControllerAddMappingsFromFile(Files::pathToUnicodeString(controllerBindingsFile).c_str());
+            if (result < 0)
+                Log(Debug::Error) << "Failed to add game controller mappings from file \"" << controllerBindingsFile
+                                  << "\": " << SDL_GetError();
+        }
+
+        if (!userControllerBindingsFile.empty())
+        {
+            const int result
+                = SDL_GameControllerAddMappingsFromFile(Files::pathToUnicodeString(userControllerBindingsFile).c_str());
+            if (result < 0)
+                Log(Debug::Error) << "Failed to add game controller mappings from user file \""
+                                  << userControllerBindingsFile << "\": " << SDL_GetError();
+        }
+
+        // Open all presently connected sticks
+        const int numSticks = SDL_NumJoysticks();
+        if (numSticks < 0)
+            Log(Debug::Error) << "Failed to get number of joysticks: " << SDL_GetError();
+
+        for (int i = 0; i < numSticks; i++)
+        {
+            if (SDL_IsGameController(i))
+            {
+                SDL_ControllerDeviceEvent evt;
+                evt.which = i;
+                static const int fakeDeviceID = 1;
+                ControllerManager::controllerAdded(fakeDeviceID, evt);
+                if (const char* name = SDL_GameControllerNameForIndex(i))
+                    Log(Debug::Info) << "Detected game controller: " << name;
+                else
+                    Log(Debug::Warning) << "Detected game controller without a name: " << SDL_GetError();
+
+                // TSP_PROBE_V39 -- measurement only. Prints the mapping string SDL
+                // resolved for this pad, so we can see whether guide:b8 survived
+                // OpenMW's own SDL_GameControllerAddMappingsFromFile() calls.
+                if (SDL_GameController* tspProbeCntrl = mBindingsManager->getControllerOrNull())
+                {
+                    char* tspProbeMap = SDL_GameControllerMapping(tspProbeCntrl);
+                    Log(Debug::Warning) << "TSP_PROBE_V39 mapping="
+                                        << (tspProbeMap ? tspProbeMap : "(null)");
+                    if (tspProbeMap)
+                        SDL_free(tspProbeMap);
+
+                    const SDL_GameControllerButtonBind tspProbeBind
+                        = SDL_GameControllerGetBindForButton(tspProbeCntrl, SDL_CONTROLLER_BUTTON_GUIDE);
+                    Log(Debug::Warning) << "TSP_PROBE_V39 guideBindType="
+                                        << static_cast<int>(tspProbeBind.bindType)
+                                        << " guideButton="
+                                        << (tspProbeBind.bindType == SDL_CONTROLLER_BINDTYPE_BUTTON
+                                                   ? tspProbeBind.value.button
+                                                   : -1);
+                }
+                else
+                {
+                    Log(Debug::Warning) << "TSP_PROBE_V39 mapping=(no-controller-open)";
+                }
+            }
+            else
+            {
+                if (const char* name = SDL_JoystickNameForIndex(i))
+                    Log(Debug::Info) << "Detected unusable controller: " << name;
+                else
+                    Log(Debug::Warning) << "Detected unusable controller without a name: " << SDL_GetError();
+            }
+        }
+
+        mBindingsManager->setJoystickDeadZone(Settings::input().mJoystickDeadZone);
+    }
+
+    void ControllerManager::update(float dt)
+    {
+        // TSP_CHORD_051_V43 -- belt and braces: if we think MENU is held but SDL
+        // says the physical button is up, we missed a release. Mark it
+        // chord-consumed so a late release cannot also toggle the mouse.
+        if (mTspMenuHeld && !isButtonPressed(SDL_CONTROLLER_BUTTON_GUIDE))
+        {
+            Log(Debug::Warning) << "TSP_CHORD_051_V43 menu=stuck-armed action=cleared";
+            mTspMenuHeld = false;
+            mTspChordConsumed = true;
+            mTspChordStickDir = 0;
+            mTspChordLtLatched = false;
+            mTspChordRtLatched = false;
+        }
+
+        // TSP_CHORD_051_V42 -- right stick / triggers while MENU is held.
+        tspUpdateChordAxes();
+
+        // TSP_CHORD_051_V42 -- the exit chord asked for a clean quit; if the main
+        // loop has not torn down by the deadline, leave hard.
+        if (mTspQuitDeadlineMs != 0 && SDL_GetTicks() >= mTspQuitDeadlineMs)
+        {
+            Log(Debug::Warning) << "TSP_CHORD_051_V42 exit=hard-kill reason=clean-quit-timeout";
+            std::fflush(nullptr);
+            std::_Exit(0);
+        }
+
+        // TSP_MOUSE_MODE_051_V41
+        // Every menu starts in controller/text controls; mouse mode is opt-in per
+        // menu rather than sticky. Keyed on the active controller window changing.
+        {
+            MWBase::WindowManager* tspResetWinMgr
+                = MWBase::Environment::get().getWindowManager();
+            void* tspTopNow = tspResetWinMgr->isGuiMode()
+                ? static_cast<void*>(tspResetWinMgr->getActiveControllerWindow())
+                : nullptr;
+
+            if (tspTopNow != mTspLastTopWindow)
+            {
+                mTspLastTopWindow = tspTopNow;
+                mTspLastMenuTapMs = 0;
+                // TSP_INPUT_MODE_051_V49 -- every menu normally starts clean.
+                //
+                // TSP_TEXT_EXIT_LATCH_051_V56
+                // EXCEPTION: B from helper TEXT has stronger semantics than an
+                // ordinary MENU mode switch. If the B-exit latch exists, do NOT
+                // clear TEXT_OFF or TEXT_ACTIVE here. The helper must see the real
+                // text-active edge disappear before another TEXT grab is allowed.
+                // Clearing these files here was the race that made:
+                // TEXT -> controller -> TEXT -> B
+                // immediately fall back into TEXT after returning to the parent UI.
+                if (!tspTextExitLatched())
+                {
+                    tspSetTextSuppressed(false);
+                    tspSetTextMode(false);
+                }
+                else
+                {
+                    Log(Debug::Info)
+                        << "TSP_TEXT_EXIT_LATCH_051_V56"
+                        << " window-change=preserve-controller-latch";
+                }
+
+                std::remove(sTspHelperYieldFlag);
+                // TSP_NO_STICKCLICK_MODES_051_V54
+                std::remove(sTspMouseRequestFlag);
+
+                if (mTspMouseMode)
+                {
+                    Log(Debug::Info) << "TSP_MOUSE_MODE_051_V41 reset=window-change";
+                    tspSetMouseMode(false);
+                }
+            }
+        }
+        // TSP_DIRECT_RSTICK_SCROLL_051_V35
+        //
+        // Stock 0.51 moves the mouse to the controller scroll widget
+        // when RIGHTY events arrive, then relies on the generic
+        // A_LookUpDown mouse-wheel path. On the TSP that indirect path
+        // does not continuously scroll Dialogue while the stick is held.
+        MWBase::WindowManager* tspDialogueScrollWinMgrV35
+            = MWBase::Environment::get().getWindowManager();
+
+        if (Settings::gui().mControllerMenus
+            && tspDialogueScrollWinMgrV35->isGuiMode())
+        {
+            MWGui::WindowBase* tspDialogueScrollTopWinV35
+                = tspDialogueScrollWinMgrV35->getActiveControllerWindow();
+
+            if (tspDialogueScrollTopWinV35 != nullptr
+                && tspDialogueScrollTopWinV35->isVisible()
+                && tspDialogueScrollTopWinV35->getControllerScrollWidget() != nullptr)
+            {
+                const float tspDialogueScrollRightYV35
+                    = getAxisValue(
+                        SDL_CONTROLLER_AXIS_RIGHTY);
+
+                if (std::abs(tspDialogueScrollRightYV35) > 0.14f)
+                {
+                    mMouseManager->warpMouseToWidget(
+                        tspDialogueScrollTopWinV35->getControllerScrollWidget());
+
+                    tspDialogueScrollWinMgrV35->setCursorVisible(false);
+
+                    const float tspDialogueScrollWheelMoveV35
+                        = -tspDialogueScrollRightYV35
+                        * dt
+                        * 1800.0f;
+
+                    mMouseManager->injectMouseMove(
+                        0.0f,
+                        0.0f,
+                        tspDialogueScrollWheelMoveV35);
+
+                    mMouseManager->warpMouse();
+
+                    static bool tspDialogueScrollLoggedV35 = false;
+
+                    if (!tspDialogueScrollLoggedV35)
+                    {
+                        Log(Debug::Info)
+                            << "TSP_DIRECT_RSTICK_SCROLL_051_V35"
+                            << " axis=RIGHTY"
+                            << " mode=continuous";
+
+                        tspDialogueScrollLoggedV35 = true;
+                    }
+                }
+            }
+        }
+
+
+        MWBase::WindowManager* tspWinMgr = MWBase::Environment::get().getWindowManager();
+        // TSP_SETTINGS_ONLY_RAW_STICK_CURSOR_051_V13
+        // TSP_MOUSE_MODE_051_V41 -- in mouse mode the text helper has released the
+        // pad, so text entry no longer has to suppress the pointer.
+        const bool tspSettingsMouseActive
+            = (tspWinMgr->isSettingsWindowVisible() && SDL_IsTextInputActive() == SDL_FALSE)
+            || tspMouseUsableNow();
+        // TSP_GUI_EXIT_NEUTRAL_GUARD_051_V13
+        static bool tspWasGuiMode = false;
+        static bool tspWaitForNeutralAfterGui = false;
+        const bool tspGuiMode = tspWinMgr->isGuiMode();
+        if (tspWasGuiMode && !tspGuiMode)
+            tspWaitForNeutralAfterGui = true;
+        tspWasGuiMode = tspGuiMode;
+        const float tspLeftX = getAxisValue(SDL_CONTROLLER_AXIS_LEFTX);
+        const float tspLeftY = getAxisValue(SDL_CONTROLLER_AXIS_LEFTY);
+        const float tspDeadZone = Settings::input().mJoystickDeadZone;
+        if (tspWaitForNeutralAfterGui)
+        {
+            if (std::abs(tspLeftX) <= tspDeadZone && std::abs(tspLeftY) <= tspDeadZone)
+            {
+                tspWaitForNeutralAfterGui = false;
+                mBindingsManager->setPlayerControlsEnabled(true);
+            }
+            else
+                mBindingsManager->setPlayerControlsEnabled(false);
+        }
+        if (tspSettingsMouseActive && mGuiCursorEnabled
+            && !(mJoystickLastUsed && !mGamepadGuiCursorEnabled))
+        {
+            float xAxis = std::abs(tspLeftX) > tspDeadZone ? tspLeftX : 0.0f;
+            float yAxis = std::abs(tspLeftY) > tspDeadZone ? tspLeftY : 0.0f;
+            float zAxis = getAxisValue(SDL_CONTROLLER_AXIS_RIGHTY);
+            if (std::abs(zAxis) <= tspDeadZone)
+                zAxis = 0.0f;
+            // We keep track of our own mouse position, so that moving the mouse while in
+            // game mode does not move the position of the GUI cursor
+            float uiScale = MWBase::Environment::get().getWindowManager()->getScalingFactor();
+            const float gamepadCursorSpeed = Settings::input().mGamepadCursorSpeed;
+            const float xMove = xAxis * dt * 1500.0f / uiScale * gamepadCursorSpeed;
+            const float yMove = yAxis * dt * 1500.0f / uiScale * gamepadCursorSpeed;
+
+            float mouseWheelMove = -zAxis * dt * 1500.0f;
+            if (xMove != 0 || yMove != 0 || mouseWheelMove != 0)
+            {
+                mMouseManager->injectMouseMove(xMove, yMove, mouseWheelMove);
+                mMouseManager->warpMouse();
+                MWBase::Environment::get().getWindowManager()->setCursorActive(true);
+            }
+        }
+
+        if (!MWBase::Environment::get().getWindowManager()->isGuiMode()
+            && MWBase::Environment::get().getStateManager()->getState() == MWBase::StateManager::State_Running
+            && MWBase::Environment::get().getInputManager()->getControlSwitch("playercontrols"))
+        {
+            float xAxis = mBindingsManager->getActionValue(A_MoveLeftRight);
+            float yAxis = mBindingsManager->getActionValue(A_MoveForwardBackward);
+            if (xAxis != 0.5 || yAxis != 0.5)
+            {
+                mJoystickLastUsed = true;
+                MWBase::Environment::get().getInputManager()->resetIdleTime();
+            }
+        }
+    }
+
+    void ControllerManager::buttonPressed(int deviceID, const SDL_ControllerButtonEvent& arg)
+    {
+        // TSP_MOUSE_MODE_051_V41 -- V39's per-button trace removed; it fired on
+        // every press in the input hot path. The ctor mapping dump stays.
+        if (!Settings::input().mEnableController || mBindingsManager->isDetectingBindingState())
+            return;
+
+        MWBase::Environment::get().getLuaManager()->inputEvent(
+            { MWBase::LuaManager::InputEvent::ControllerPressed, arg.button });
+
+        mJoystickLastUsed = true;
+
+        // TSP_MOUSE_MODE_051_V38
+        // The TSP MENU button (physical BTN_MODE / js b8, mapped as guide:b8) is
+        // consumed here so it can never reach the bindings manager, where stock
+        // 0.51 has A_QuickSave sitting on GUIDE.
+        if (arg.button == SDL_CONTROLLER_BUTTON_GUIDE)
+        {
+            // TSP_CHORD_051_V42 -- MENU now ARMS on press and acts on release, so
+            // one button can mean three things without them fighting:
+            //   held + another input -> chord   (consumed here)
+            //   released, nothing else pressed -> mouse-mode toggle
+            //   two such releases inside sTspMenuDoubleTapMs -> hard reset
+            mTspMenuHeld = true;
+            mTspChordConsumed = false;
+            return;
+        }
+
+        // TSP_CHORD_051_V42 -- any other button while MENU is held is a chord and
+        // must never also reach the game.
+        if (mTspMenuHeld)
+        {
+            tspFireChordButton(arg.button);
+            return;
+        }
+
+        if (MWBase::Environment::get().getWindowManager()->isGuiMode())
+        {
+            if (gamepadToGuiControl(arg))
+                return;
+
+            if (mGamepadGuiCursorEnabled)
+            {
+                // Temporary mouse binding until keyboard controls are available:
+                if (arg.button == SDL_CONTROLLER_BUTTON_A) // We'll pretend that A is left click.
+                {
+                    bool mousePressSuccess = mMouseManager->injectMouseButtonPress(SDL_BUTTON_LEFT);
+                    mGamepadMousePressed = true;
+                    if (MyGUI::InputManager::getInstance().getMouseFocusWidget())
+                    {
+                        MyGUI::Button* b
+                            = MyGUI::InputManager::getInstance().getMouseFocusWidget()->castType<MyGUI::Button>(false);
+                        if (b && b->getEnabled())
+                            MWBase::Environment::get().getWindowManager()->playSound(
+                                ESM::RefId::stringRefId("Menu Click"));
+                    }
+
+                    mBindingsManager->setPlayerControlsEnabled(!mousePressSuccess);
+                }
+            }
+        }
+        else
+            mBindingsManager->setPlayerControlsEnabled(true);
+
+        // esc, to leave initial movie screen
+        auto kc = SDLUtil::sdlKeyToMyGUI(SDLK_ESCAPE);
+        mBindingsManager->setPlayerControlsEnabled(!MyGUI::InputManager::getInstance().injectKeyPress(kc, 0));
+
+        if (!MWBase::Environment::get().getInputManager()->controlsDisabled())
+            mBindingsManager->controllerButtonPressed(deviceID, arg);
+    }
+
+    void ControllerManager::buttonReleased(int deviceID, const SDL_ControllerButtonEvent& arg)
+    {
+        if (mBindingsManager->isDetectingBindingState())
+        {
+            mBindingsManager->controllerButtonReleased(deviceID, arg);
+            return;
+        }
+
+        if (Settings::input().mEnableController)
+        {
+            MWBase::Environment::get().getLuaManager()->inputEvent(
+                { MWBase::LuaManager::InputEvent::ControllerReleased, arg.button });
+        }
+
+        // TSP_CHORD_051_V43 -- the controlsDisabled() guard moved BELOW the MENU
+        // handling. During a save load it is true, and the old ordering swallowed
+        // MENU's release, leaving the chord layer armed: every button then became a
+        // chord and nothing worked until MENU was tapped again. buttonPressed has no
+        // such guard, so press and release were not symmetric.
+        mJoystickLastUsed = true;
+
+        // TSP_CHORD_051_V42 -- MENU acts here, not on press.
+        if (arg.button == SDL_CONTROLLER_BUTTON_GUIDE)
+        {
+            const bool tspWasChord = mTspChordConsumed;
+            mTspMenuHeld = false;
+            mTspChordConsumed = false;
+            mTspChordStickDir = 0;
+            mTspChordLtLatched = false;
+            mTspChordRtLatched = false;
+
+            if (tspWasChord)
+            {
+                Log(Debug::Info) << "TSP_CHORD_051_V42 menu=release action=chord-consumed";
+                return;
+            }
+
+            if (!MWBase::Environment::get().getWindowManager()->isGuiMode())
+            {
+                Log(Debug::Info) << "TSP_MOUSE_MODE_051_V38 menu=release action=gameplay-noop";
+                return;
+            }
+
+            // TSP_MOUSE_MODE_051_V41 -- bare tap: toggle, or reset on a double tap.
+            const unsigned int tspNowMs = SDL_GetTicks();
+            const bool tspDoubleTap = mTspLastMenuTapMs != 0
+                && (tspNowMs - mTspLastMenuTapMs) <= sTspMenuDoubleTapMs;
+
+            if (tspDoubleTap)
+            {
+                mTspLastMenuTapMs = 0;
+                tspSetMouseMode(false);
+                Log(Debug::Info) << "TSP_MOUSE_MODE_051_V41 menu=double-tap action=reset";
+            }
+            else
+            {
+                mTspLastMenuTapMs = tspNowMs;
+                // TSP_INPUT_MODE_051_V49 -- MENU switches TEXT <-> CONTROLLER and
+                // never touches the mouse. L3 owns the mouse, exclusively.
+                // TSP_TEXT_TOGGLE_051_V50 -- MENU no longer writes the helper's
+                // flag directly. It flips "controller nav here", and the per-frame
+                // reconcile in inputmanagerimp decides who gets the pad. Writing
+                // the helper flag from here fought that reconcile and text never
+                // came up at all -- that was the V49 regression.
+                // TSP_TEXT_HANDOFF_051_V51 -- the helper owns MENU in BOTH
+                // directions. It eats the button while it holds the pad, and it
+                // still sees it after yielding (line 564 of the helper). The
+                // engine running its own toggle over the top is what made text
+                // impossible to re-enable. Engine: hands off.
+                // TSP_NO_STICKCLICK_MODES_051_V54
+                // When the engine currently owns a mouse-capable GUI, bare MENU
+                // means MOUSE -> CONTROLLER. If mouse mode is already off, keep
+                // V51's ownership rule: the helper may use this same MENU press
+                // to reclaim TEXT when a text field is actually active.
+                if (mTspMouseMode)
+                {
+                    tspSetMouseMode(false);
+                    Log(Debug::Info)
+                        << "TSP_NO_STICKCLICK_MODES_051_V54 menu=mouse-to-controller";
+                }
+                else
+                {
+                    Log(Debug::Info)
+                        << "TSP_TEXT_HANDOFF_051_V51 menu=tap action=helper-owned";
+                }
+            }
+            return;
+        }
+
+        // TSP_CHORD_051_V42 -- swallow the release of a chorded button too, or the
+        // bindings manager sees a release for a press it never got.
+        if (mTspMenuHeld)
+            return;
+
+        // TSP_CHORD_051_V43 -- guard reinstated here, after MENU has been handled.
+        if (!Settings::input().mEnableController || MWBase::Environment::get().getInputManager()->controlsDisabled())
+            return;
+
+        if (MWBase::Environment::get().getWindowManager()->isGuiMode())
+        {
+            if (mGamepadGuiCursorEnabled && (!Settings::gui().mControllerMenus || mGamepadMousePressed))
+            {
+                // Temporary mouse binding until keyboard controls are available:
+                if (arg.button == SDL_CONTROLLER_BUTTON_A) // We'll pretend that A is left click.
+                {
+                    bool mousePressSuccess = mMouseManager->injectMouseButtonRelease(SDL_BUTTON_LEFT);
+                    mGamepadMousePressed = false;
+                    if (mBindingsManager->isDetectingBindingState()) // If the player just triggered binding, don't let
+                                                                     // button release bind.
+                        return;
+
+                    mBindingsManager->setPlayerControlsEnabled(!mousePressSuccess);
+                }
+            }
+        }
+        else
+            mBindingsManager->setPlayerControlsEnabled(true);
+
+        // esc, to leave initial movie screen
+        auto kc = SDLUtil::sdlKeyToMyGUI(SDLK_ESCAPE);
+        mBindingsManager->setPlayerControlsEnabled(!MyGUI::InputManager::getInstance().injectKeyRelease(kc));
+
+        mBindingsManager->controllerButtonReleased(deviceID, arg);
+    }
+
+    void ControllerManager::axisMoved(int deviceID, const SDL_ControllerAxisEvent& arg)
+    {
+        if (mBindingsManager->isDetectingBindingState())
+        {
+            mBindingsManager->controllerAxisMoved(deviceID, arg);
+            return;
+        }
+
+        if (!Settings::input().mEnableController || MWBase::Environment::get().getInputManager()->controlsDisabled())
+            return;
+
+        // TSP_CHORD_051_V42 -- while MENU is held the sticks and triggers drive
+        // chords (read from SDL state in update()), so they must not also move the
+        // player or the GUI cursor.
+        if (mTspMenuHeld)
+            return;
+
+        mJoystickLastUsed = true;
+        if (MWBase::Environment::get().getWindowManager()->isGuiMode())
+        {
+            if (gamepadToGuiControl(arg))
+                return;
+        }
+        else if (mBindingsManager->actionIsActive(A_TogglePOV)
+            && (arg.axis == SDL_CONTROLLER_AXIS_TRIGGERRIGHT || arg.axis == SDL_CONTROLLER_AXIS_TRIGGERLEFT))
+        {
+            // Preview Mode Gamepad Zooming; do not propagate to mBindingsManager
+            return;
+        }
+        mBindingsManager->controllerAxisMoved(deviceID, arg);
+    }
+
+    void ControllerManager::controllerAdded(int deviceID, const SDL_ControllerDeviceEvent& arg)
+    {
+        mBindingsManager->controllerAdded(deviceID, arg);
+        enableGyroSensor();
+    }
+
+    void ControllerManager::controllerRemoved(const SDL_ControllerDeviceEvent& arg)
+    {
+        mBindingsManager->controllerRemoved(arg);
+    }
+
+    bool ControllerManager::gamepadToGuiControl(const SDL_ControllerButtonEvent& arg)
+    {
+        MWBase::WindowManager* winMgr = MWBase::Environment::get().getWindowManager();
+
+        // TSP_MOUSE_MODE_051_V38
+        // Must sit above the mControllerMenus dispatch: MainMenu, CountDialog and
+        // SaveGameDialog all return true unconditionally from onControllerButtonEvent,
+        // so anything handled below this point never sees these buttons.
+        if (arg.button == SDL_CONTROLLER_BUTTON_LEFTSTICK)
+        {
+            tspSetMouseMode(!mTspMouseMode);
+            return true;
+        }
+        // TSP_TEXT_HANDOFF_051_V51 -- bare R3 forces the text controls back.
+        // Safe: the chord layer only reads buttons while MENU is HELD, so this
+        // cannot collide with MENU+R3 = quick slot 9.
+        if (arg.button == SDL_CONTROLLER_BUTTON_RIGHTSTICK)
+        {
+            if (std::FILE* tspReset = std::fopen("/tmp/openmw-tsp-text-reset", "w"))
+            {
+                std::fputs("1\n", tspReset);
+                std::fclose(tspReset);
+            }
+            Log(Debug::Info) << "TSP_TEXT_HANDOFF_051_V51 r3=force-text-reset";
+            return true;
+        }
+        if (arg.button == SDL_CONTROLLER_BUTTON_GUIDE)
+        {
+            tspSetMouseMode(!mTspMouseMode);
+            return true;
+        }
+
+        // TSP_SETTINGS_ONLY_BUTTON_MOUSE_051_V13
+        // TSP_MOUSE_MODE_051_V41
+        const bool tspSettingsMouseActive
+            = (winMgr->isSettingsWindowVisible() && SDL_IsTextInputActive() == SDL_FALSE)
+            || tspMouseUsableNow();
+
+        if (Settings::gui().mControllerMenus)
+        {
+            // Update cursor state.
+            // TSP_MOUSE_MODE_051_V38 -- in mouse mode A always falls through to a click,
+            // independent of the engine's own cursor-visibility bookkeeping.
+            // TSP_A_DOUBLE_PRESS_051_V53 -- was:
+            //     winMgr->getCursorVisible() || tspMouseUsableNow()
+            // getCursorVisible() is transient state left over from earlier, and
+            // setCursorActive(false) on the next line clears it as a side effect of
+            // the very press being judged. So a first A could be converted into an
+            // emulated click at a stale pointer position, hit nothing, and only the
+            // second A would reach onControllerButtonEvent. Use the same predicate
+            // the cursor itself is gated on, which has no per-press hysteresis.
+            bool treatAsMouse = tspSettingsMouseActive;
+            winMgr->setCursorActive(false);
+
+            MWGui::WindowBase* topWin = winMgr->getActiveControllerWindow();
+            if (topWin && topWin->isVisible())
+            {
+                // When the inventory tooltip is visible, we don't actually want the A button to
+                // act like a mouse button; it should act normally.
+                if (treatAsMouse && arg.button == SDL_CONTROLLER_BUTTON_A && winMgr->getControllerTooltipVisible())
+                    treatAsMouse = false;
+
+                mGamepadGuiCursorEnabled
+                    = tspSettingsMouseActive && topWin->isGamepadCursorAllowed();
+
+                // TSP_A_DOUBLE_PRESS_051_V53 -- measurement only. If a double
+                // press is ever seen again, this names the branch that took it.
+                if (arg.button == SDL_CONTROLLER_BUTTON_A)
+                {
+                    Log(Debug::Info)
+                        << "TSP_A_DOUBLE_PRESS_051_V53 a=press"
+                        << " asMouse=" << (treatAsMouse ? 1 : 0)
+                        << " cursorEnabled=" << (mGamepadGuiCursorEnabled ? 1 : 0)
+                        << " settingsMouse=" << (tspSettingsMouseActive ? 1 : 0)
+                        << " cursorVisible=" << (winMgr->getCursorVisible() ? 1 : 0)
+                        << " mouseUsable=" << (tspMouseUsableNow() ? 1 : 0)
+                        << " route=" << ((mGamepadGuiCursorEnabled && treatAsMouse)
+                                             ? "emulated-click"
+                                             : "widget-activate");
+                }
+                // Fall through to mouse click
+                if (mGamepadGuiCursorEnabled && treatAsMouse && arg.button == SDL_CONTROLLER_BUTTON_A)
+                    return false;
+
+                if (topWin->onControllerButtonEvent(arg))
+                    return true;
+            }
+        }
+
+        // Presumption of GUI mode will be removed in the future.
+        // MyGUI KeyCodes *may* change.
+        MyGUI::KeyCode key = MyGUI::KeyCode::None;
+        switch (arg.button)
+        {
+            case SDL_CONTROLLER_BUTTON_DPAD_UP:
+                key = MyGUI::KeyCode::ArrowUp;
+                break;
+            case SDL_CONTROLLER_BUTTON_DPAD_RIGHT:
+                key = MyGUI::KeyCode::ArrowRight;
+                break;
+            case SDL_CONTROLLER_BUTTON_DPAD_DOWN:
+                key = MyGUI::KeyCode::ArrowDown;
+                break;
+            case SDL_CONTROLLER_BUTTON_DPAD_LEFT:
+                key = MyGUI::KeyCode::ArrowLeft;
+                break;
+            case SDL_CONTROLLER_BUTTON_A:
+                // If we are using the joystick as a GUI mouse, A must be handled via mouse.
+                if (mGamepadGuiCursorEnabled)
+                    return false;
+                key = MyGUI::KeyCode::Space;
+                break;
+            case SDL_CONTROLLER_BUTTON_B:
+                if (MyGUI::InputManager::getInstance().isModalAny())
+                    winMgr->exitCurrentModal();
+                else
+                    winMgr->exitCurrentGuiMode();
+                return true;
+            case SDL_CONTROLLER_BUTTON_X:
+                key = MyGUI::KeyCode::Semicolon;
+                break;
+            case SDL_CONTROLLER_BUTTON_Y:
+                key = MyGUI::KeyCode::Apostrophe;
+                break;
+            case SDL_CONTROLLER_BUTTON_LEFTSHOULDER:
+                MyGUI::InputManager::getInstance().injectKeyPress(MyGUI::KeyCode::LeftShift);
+                winMgr->injectKeyPress(MyGUI::KeyCode::Tab, 0, false);
+                MyGUI::InputManager::getInstance().injectKeyRelease(MyGUI::KeyCode::LeftShift);
+                return true;
+            case SDL_CONTROLLER_BUTTON_RIGHTSHOULDER:
+                MWBase::Environment::get().getWindowManager()->injectKeyPress(MyGUI::KeyCode::Tab, 0, false);
+                return true;
+            case SDL_CONTROLLER_BUTTON_LEFTSTICK:
+                mGamepadGuiCursorEnabled = !mGamepadGuiCursorEnabled;
+                winMgr->setCursorActive(mGamepadGuiCursorEnabled);
+                return true;
+            default:
+                return false;
+        }
+
+        // Some keys will work even when Text Input windows/modals are in focus.
+        // TSP_TEXT_EXIT_CONTROLLER_051_V55
+        // SDL text focus is not the same thing as helper TEXT ownership. B and
+        // MENU can deliberately release EVIOCGRAB while the EditBox still owns
+        // SDL focus. In that controller-suppressed state, allow D-pad / GUI key
+        // navigation immediately instead of leaving the menu apparently dead.
+        if (SDL_IsTextInputActive() && !tspTextSuppressed())
+            return false;
+
+        winMgr->injectKeyPress(key, 0, false);
+        return true;
+    }
+
+    bool ControllerManager::gamepadToGuiControl(const SDL_ControllerAxisEvent& arg)
+    {
+        const int triggerPressThreshold = Settings::gui().mControllerTriggerPressThreshold;
+        const int rawTriggerReleaseThreshold = Settings::gui().mControllerTriggerReleaseThreshold;
+        const int triggerReleaseThreshold = std::clamp(rawTriggerReleaseThreshold, 0, triggerPressThreshold - 1);
+
+        auto handleTriggerPress = [&](Sint16 value, bool& triggerGuiPressed, const auto& onPress) {
+            if (value >= triggerPressThreshold && !triggerGuiPressed)
+            {
+                onPress();
+                triggerGuiPressed = true;
+            }
+            else if (value <= triggerReleaseThreshold)
+            {
+                triggerGuiPressed = false;
+            }
+        };
+
+        MWBase::WindowManager* winMgr = MWBase::Environment::get().getWindowManager();
+        // TSP_SETTINGS_ONLY_AXIS_MOUSE_051_V13
+        // TSP_MOUSE_MODE_051_V41
+        const bool tspSettingsMouseActive
+            = (winMgr->isSettingsWindowVisible() && SDL_IsTextInputActive() == SDL_FALSE)
+            || tspMouseUsableNow();
+
+        if (Settings::gui().mControllerMenus)
+        {
+            // Left and right triggers toggle through open GUI windows.
+            if (arg.axis == SDL_CONTROLLER_AXIS_TRIGGERRIGHT)
+            {
+                handleTriggerPress(
+                    arg.value, mRightTriggerGuiPressed, [&] { winMgr->cycleActiveControllerWindow(true); });
+                return true;
+            }
+            else if (arg.axis == SDL_CONTROLLER_AXIS_TRIGGERLEFT)
+            {
+                handleTriggerPress(
+                    arg.value, mLeftTriggerGuiPressed, [&] { winMgr->cycleActiveControllerWindow(false); });
+                return true;
+            }
+
+            MWGui::WindowBase* topWin = winMgr->getActiveControllerWindow();
+            if (topWin && topWin->isVisible())
+            {
+                // TSP_NO_STICKCLICK_MODES_051_V54
+                // Base TSP has no L3. In native/controller GUI mode, a deliberate
+                // left-stick movement is therefore the intuitive request for the
+                // pointer. Only windows that already permit OpenMW's gamepad cursor
+                // can wake it; main/pause/loading opt-outs stay untouched.
+                if (!tspSettingsMouseActive
+                    && topWin->isGamepadCursorAllowed()
+                    && (arg.axis == SDL_CONTROLLER_AXIS_LEFTX
+                        || arg.axis == SDL_CONTROLLER_AXIS_LEFTY)
+                    && std::abs(static_cast<int>(arg.value))
+                        >= static_cast<int>(sTspMouseWakeAxisThreshold))
+                {
+                    mGamepadGuiCursorEnabled = true;
+                    tspSetMouseMode(true);
+                    winMgr->setControllerTooltipVisible(false);
+                    Log(Debug::Info)
+                        << "TSP_NO_STICKCLICK_MODES_051_V54"
+                        << " left-stick=controller-to-mouse"
+                        << " axis=" << static_cast<int>(arg.axis)
+                        << " value=" << static_cast<int>(arg.value);
+                    return true;
+                }
+
+                // Update cursor state
+                mGamepadGuiCursorEnabled
+                    = tspSettingsMouseActive && topWin->isGamepadCursorAllowed();
+                if (!mGamepadGuiCursorEnabled)
+                    winMgr->setCursorActive(false);
+
+                // Deadzone check
+                if (std::abs(arg.value) < 2000)
+                    return !mGamepadGuiCursorEnabled;
+
+                if (mGamepadGuiCursorEnabled
+                    && (arg.axis == SDL_CONTROLLER_AXIS_LEFTX || arg.axis == SDL_CONTROLLER_AXIS_LEFTY))
+                {
+                    // v13 reads raw stick position in update(); consume this axis
+                    // here so it never becomes normal player movement.
+                    winMgr->setControllerTooltipVisible(false);
+                    winMgr->setCursorVisible(true);
+                    return true;
+                }
+
+                // Some windows have a specific widget to scroll with the right stick. Move the mouse there.
+                if (arg.axis == SDL_CONTROLLER_AXIS_RIGHTY && topWin->getControllerScrollWidget() != nullptr)
+                {
+                    mMouseManager->warpMouseToWidget(topWin->getControllerScrollWidget());
+                    winMgr->setCursorVisible(false);
+                }
+
+                if (topWin->onControllerThumbstickEvent(arg))
+                {
+                    // Window handled the event.
+                    return true;
+                }
+                else if (arg.axis == SDL_CONTROLLER_AXIS_RIGHTX || arg.axis == SDL_CONTROLLER_AXIS_RIGHTY)
+                {
+                    // Only right-stick scroll if mouse is visible or there's a widget to scroll.
+                    return !winMgr->getCursorVisible() && topWin->getControllerScrollWidget() == nullptr;
+                }
+            }
+        }
+
+        switch (arg.axis)
+        {
+            case SDL_CONTROLLER_AXIS_TRIGGERRIGHT:
+                handleTriggerPress(arg.value, mRightTriggerGuiPressed,
+                    [&] { winMgr->injectKeyPress(MyGUI::KeyCode::Minus, 0, false); });
+                break;
+            case SDL_CONTROLLER_AXIS_TRIGGERLEFT:
+                handleTriggerPress(arg.value, mLeftTriggerGuiPressed,
+                    [&] { winMgr->injectKeyPress(MyGUI::KeyCode::Equals, 0, false); });
+                break;
+            case SDL_CONTROLLER_AXIS_LEFTX:
+            case SDL_CONTROLLER_AXIS_LEFTY:
+            case SDL_CONTROLLER_AXIS_RIGHTX:
+            case SDL_CONTROLLER_AXIS_RIGHTY:
+                // If we are using the joystick as a GUI mouse, process mouse movement elsewhere.
+                if (mGamepadGuiCursorEnabled)
+                    return false;
+                break;
+            default:
+                return false;
+        }
+
+        return true;
+    }
+
+    // TSP_CHORD_051_V42 -- fire one chord action.
+    void ControllerManager::tspFireChordAction(int action, const char* what)
+    {
+        mTspChordConsumed = true;
+
+        if (MWBase::Environment::get().getWindowManager()->isGuiMode() && !sTspChordsInMenus)
+        {
+            Log(Debug::Info) << "TSP_CHORD_051_V42 chord=" << what << " action=ignored-in-gui";
+            return;
+        }
+
+        Log(Debug::Info) << "TSP_CHORD_051_V42 chord=" << what << " action=fired";
+        MWBase::Environment::get().getInputManager()->executeAction(action);
+    }
+
+    // TSP_CHORD_051_V42 -- MENU + face button / shoulder.
+    void ControllerManager::tspFireChordButton(int sdlButton)
+    {
+        // The exit chord is the one that works everywhere, menus included: it is
+        // the escape hatch for a UI you cannot get out of.
+        if (sdlButton == sTspChordExitButton)
+        {
+            mTspChordConsumed = true;
+            Log(Debug::Warning) << "TSP_CHORD_051_V42 chord=exit sdlButton=" << sdlButton
+                                << " action=requestQuit";
+            MWBase::Environment::get().getStateManager()->requestQuit();
+            mTspQuitDeadlineMs = SDL_GetTicks() + sTspChordExitKillMs;
+            return;
+        }
+
+        switch (sdlButton)
+        {
+            case SDL_CONTROLLER_BUTTON_A:
+                tspFireChordAction(A_QuickKey1, "quickslot1-A");
+                return;
+            case SDL_CONTROLLER_BUTTON_B:
+                tspFireChordAction(A_QuickKey2, "quickslot2-B");
+                return;
+            case SDL_CONTROLLER_BUTTON_X:
+                tspFireChordAction(A_QuickKey3, "quickslot3-X");
+                return;
+            case SDL_CONTROLLER_BUTTON_Y:
+                tspFireChordAction(A_QuickKey4, "quickslot4-Y");
+                return;
+            case SDL_CONTROLLER_BUTTON_RIGHTSHOULDER:
+                tspFireChordAction(A_QuickKeysMenu, "quickkeysmenu-RB");
+                return;
+            case SDL_CONTROLLER_BUTTON_LEFTSHOULDER:
+                tspFireChordAction(A_Screenshot, "screenshot-LB");
+                return;
+            // TSP_CHORD_051_V43 -- OpenMW has ten quick keys; R3 takes slot 9.
+            // Slot 10 has no home while L3 is reserved for the mouse.
+            case SDL_CONTROLLER_BUTTON_RIGHTSTICK:
+                tspFireChordAction(A_QuickKey9, "quickslot9-R3");
+                return;
+            default:
+                break;
+        }
+
+        // Still consumed: MENU+<anything> must never reach the game.
+        mTspChordConsumed = true;
+        Log(Debug::Info) << "TSP_CHORD_051_V42 chord=sdlButton" << sdlButton << " action=unmapped";
+    }
+
+    // TSP_CHORD_051_V42 -- MENU + right stick (slots 5-8) and MENU + triggers.
+    // Read from SDL state rather than events so a held stick fires exactly once.
+    void ControllerManager::tspUpdateChordAxes()
+    {
+        if (!mTspMenuHeld)
+        {
+            mTspChordStickDir = 0;
+            mTspChordLtLatched = false;
+            mTspChordRtLatched = false;
+            return;
+        }
+
+        const float tspRx = getAxisValue(SDL_CONTROLLER_AXIS_RIGHTX);
+        const float tspRy = getAxisValue(SDL_CONTROLLER_AXIS_RIGHTY);
+
+        int tspDir = 0;
+        if (tspRy <= -sTspChordStickThreshold)
+            tspDir = 1;
+        else if (tspRy >= sTspChordStickThreshold)
+            tspDir = 3;
+        else if (tspRx <= -sTspChordStickThreshold)
+            tspDir = 2;
+        else if (tspRx >= sTspChordStickThreshold)
+            tspDir = 4;
+
+        if (tspDir != mTspChordStickDir)
+        {
+            mTspChordStickDir = tspDir;
+            switch (tspDir)
+            {
+                case 1: tspFireChordAction(A_QuickKey5, "quickslot5-RS-up"); break;
+                case 2: tspFireChordAction(A_QuickKey6, "quickslot6-RS-left"); break;
+                case 3: tspFireChordAction(A_QuickKey7, "quickslot7-RS-down"); break;
+                case 4: tspFireChordAction(A_QuickKey8, "quickslot8-RS-right"); break;
+                default: break;
+            }
+        }
+
+        const bool tspLtNow
+            = getAxisValue(SDL_CONTROLLER_AXIS_TRIGGERLEFT) >= sTspChordTriggerThreshold;
+        const bool tspRtNow
+            = getAxisValue(SDL_CONTROLLER_AXIS_TRIGGERRIGHT) >= sTspChordTriggerThreshold;
+
+        if (tspLtNow && !mTspChordLtLatched)
+            tspFireChordAction(A_QuickSave, "quicksave-LT");
+        if (tspRtNow && !mTspChordRtLatched)
+            tspFireChordAction(A_QuickLoad, "quickload-RT");
+
+        mTspChordLtLatched = tspLtNow;
+        mTspChordRtLatched = tspRtNow;
+    }
+
+    // TSP_MOUSE_MODE_051_V41
+    bool ControllerManager::tspMouseUsableNow()
+    {
+        if (!mTspMouseMode)
+            return false;
+
+        MWBase::WindowManager* winMgr = MWBase::Environment::get().getWindowManager();
+        if (!winMgr->isGuiMode())
+            return false;
+
+        // Honour the window's own opt-out. MainMenu sets mDisableGamepadCursor,
+        // so the main and pause menus never get a pointer even in mouse mode.
+        MWGui::WindowBase* topWin = winMgr->getActiveControllerWindow();
+        if (topWin != nullptr && !topWin->isGamepadCursorAllowed())
+            return false;
+
+        return true;
+    }
+
+    // TSP_MOUSE_MODE_051_V38
+    void ControllerManager::tspSetMouseMode(bool on)
+    {
+        mTspMouseMode = on;
+
+        // TSP_NO_STICKCLICK_MODES_051_V54
+        // The helper consults this only when it has already yielded the pad.
+        // MENU while this file exists must be left to the engine so the first
+        // tap performs MOUSE -> CONTROLLER instead of jumping straight to TEXT.
+        if (on)
+        {
+            if (std::FILE* tspMouseActive = std::fopen(sTspMouseActiveFlag, "w"))
+            {
+                std::fputs("1\n", tspMouseActive);
+                std::fclose(tspMouseActive);
+            }
+            else
+                Log(Debug::Warning)
+                    << "TSP_NO_STICKCLICK_MODES_051_V54 mouse-active-flag=write-failed";
+        }
+        else
+            std::remove(sTspMouseActiveFlag);
+
+        MWBase::WindowManager* winMgr = MWBase::Environment::get().getWindowManager();
+        winMgr->setCursorActive(on);
+        winMgr->setCursorVisible(on);
+
+        Log(Debug::Info) << "TSP_MOUSE_MODE_051_V38 mouseMode=" << (on ? 1 : 0)
+                         << " gui=" << (winMgr->isGuiMode() ? 1 : 0);
+    }
+
+    float ControllerManager::getAxisValue(SDL_GameControllerAxis axis) const
+    {
+        SDL_GameController* cntrl = mBindingsManager->getControllerOrNull();
+        constexpr float axisMaxAbsoluteValue = 32768;
+        if (cntrl != nullptr)
+            return SDL_GameControllerGetAxis(cntrl, axis) / axisMaxAbsoluteValue;
+        return 0;
+    }
+
+    bool ControllerManager::isButtonPressed(SDL_GameControllerButton button) const
+    {
+        SDL_GameController* cntrl = mBindingsManager->getControllerOrNull();
+        if (cntrl)
+            return SDL_GameControllerGetButton(cntrl, button) > 0;
+        else
+            return false;
+    }
+
+    void ControllerManager::enableGyroSensor()
+    {
+        mGyroAvailable = false;
+        SDL_GameController* cntrl = mBindingsManager->getControllerOrNull();
+        if (!cntrl)
+            return;
+        if (!SDL_GameControllerHasSensor(cntrl, SDL_SENSOR_GYRO))
+            return;
+        if (const int result = SDL_GameControllerSetSensorEnabled(cntrl, SDL_SENSOR_GYRO, SDL_TRUE); result < 0)
+        {
+            Log(Debug::Error) << "Failed to enable game controller sensor: " << SDL_GetError();
+            return;
+        }
+        mGyroAvailable = true;
+    }
+
+    bool ControllerManager::isGyroAvailable() const
+    {
+        return mGyroAvailable;
+    }
+
+    std::array<float, 3> ControllerManager::getGyroValues() const
+    {
+        float gyro[3] = { 0.f };
+        SDL_GameController* cntrl = mBindingsManager->getControllerOrNull();
+        if (cntrl && mGyroAvailable)
+        {
+            const int result = SDL_GameControllerGetSensorData(cntrl, SDL_SENSOR_GYRO, gyro, 3);
+            if (result < 0)
+                Log(Debug::Error) << "Failed to get game controller sensor data: " << SDL_GetError();
+        }
+        return std::array<float, 3>({ gyro[0], gyro[1], gyro[2] });
+    }
+
+    int ControllerManager::getControllerType()
+    {
+        SDL_GameController* cntrl = mBindingsManager->getControllerOrNull();
+        if (cntrl)
+            return SDL_GameControllerGetType(cntrl);
+        return 0;
+    }
+
+    std::string ControllerManager::getControllerButtonIcon(int button)
+    {
+        int controllerType = ControllerManager::getControllerType();
+
+        bool isXbox = controllerType == SDL_CONTROLLER_TYPE_XBOX360 || controllerType == SDL_CONTROLLER_TYPE_XBOXONE;
+        bool isPsx = controllerType == SDL_CONTROLLER_TYPE_PS3 || controllerType == SDL_CONTROLLER_TYPE_PS4
+            || controllerType == SDL_CONTROLLER_TYPE_PS5;
+        bool isSwitch = controllerType == SDL_CONTROLLER_TYPE_NINTENDO_SWITCH_PRO;
+
+        switch (button)
+        {
+            case SDL_CONTROLLER_BUTTON_A:
+                if (isPsx)
+                    return "textures/omw_psx_button_x.dds";
+                return "textures/omw_steam_button_a.dds";
+            case SDL_CONTROLLER_BUTTON_B:
+                if (isPsx)
+                    return "textures/omw_psx_button_circle.dds";
+                return "textures/omw_steam_button_b.dds";
+            case SDL_CONTROLLER_BUTTON_BACK:
+                return "textures/omw_steam_button_view.dds";
+            case SDL_CONTROLLER_BUTTON_DPAD_DOWN:
+            case SDL_CONTROLLER_BUTTON_DPAD_LEFT:
+            case SDL_CONTROLLER_BUTTON_DPAD_RIGHT:
+            case SDL_CONTROLLER_BUTTON_DPAD_UP:
+                if (isPsx)
+                    return "textures/omw_psx_button_dpad.dds";
+                return "textures/omw_steam_button_dpad.dds";
+            case SDL_CONTROLLER_BUTTON_LEFTSHOULDER:
+                if (isXbox)
+                    return "textures/omw_xbox_button_lb.dds";
+                else if (isSwitch)
+                    return "textures/omw_switch_button_l.dds";
+                return "textures/omw_steam_button_l1.dds";
+            case SDL_CONTROLLER_BUTTON_LEFTSTICK:
+                return "textures/omw_steam_button_l3.dds";
+            case SDL_CONTROLLER_BUTTON_RIGHTSHOULDER:
+                if (isXbox)
+                    return "textures/omw_xbox_button_rb.dds";
+                else if (isSwitch)
+                    return "textures/omw_switch_button_r.dds";
+                return "textures/omw_steam_button_r1.dds";
+            case SDL_CONTROLLER_BUTTON_RIGHTSTICK:
+                return "textures/omw_steam_button_r3.dds";
+            case SDL_CONTROLLER_BUTTON_START:
+                return "textures/omw_steam_button_menu.dds";
+            case SDL_CONTROLLER_BUTTON_X:
+                if (isPsx)
+                    return "textures/omw_psx_button_square.dds";
+                return "textures/omw_steam_button_x.dds";
+            case SDL_CONTROLLER_BUTTON_Y:
+                if (isPsx)
+                    return "textures/omw_psx_button_triangle.dds";
+                return "textures/omw_steam_button_y.dds";
+            case SDL_CONTROLLER_BUTTON_GUIDE:
+            case SDL_CONTROLLER_BUTTON_MISC1:
+            case SDL_CONTROLLER_BUTTON_PADDLE1:
+            case SDL_CONTROLLER_BUTTON_PADDLE2:
+            case SDL_CONTROLLER_BUTTON_PADDLE3:
+            case SDL_CONTROLLER_BUTTON_PADDLE4:
+            case SDL_CONTROLLER_BUTTON_TOUCHPAD:
+            default:
+                return {};
+        }
+    }
+
+    std::string ControllerManager::getControllerAxisIcon(int axis)
+    {
+        int controllerType = ControllerManager::getControllerType();
+
+        bool isXbox = controllerType == SDL_CONTROLLER_TYPE_XBOX360 || controllerType == SDL_CONTROLLER_TYPE_XBOXONE;
+        bool isSwitch = controllerType == SDL_CONTROLLER_TYPE_NINTENDO_SWITCH_PRO;
+
+        switch (axis)
+        {
+            case SDL_CONTROLLER_AXIS_LEFTX:
+            case SDL_CONTROLLER_AXIS_LEFTY:
+                return "textures/omw_steam_button_lstick.dds";
+            case SDL_CONTROLLER_AXIS_RIGHTX:
+            case SDL_CONTROLLER_AXIS_RIGHTY:
+                return "textures/omw_steam_button_rstick.dds";
+            case SDL_CONTROLLER_AXIS_TRIGGERLEFT:
+                if (isXbox)
+                    return "textures/omw_xbox_button_lt.dds";
+                else if (isSwitch)
+                    return "textures/omw_switch_button_zl.dds";
+                return "textures/omw_steam_button_l2.dds";
+            case SDL_CONTROLLER_AXIS_TRIGGERRIGHT:
+                if (isXbox)
+                    return "textures/omw_xbox_button_rt.dds";
+                else if (isSwitch)
+                    return "textures/omw_switch_button_zr.dds";
+                return "textures/omw_steam_button_r2.dds";
+            default:
+                return {};
+        }
+    }
+
+    void ControllerManager::touchpadMoved(int deviceId, const SDLUtil::TouchEvent& arg)
+    {
+        MWBase::Environment::get().getLuaManager()->inputEvent({ MWBase::LuaManager::InputEvent::TouchMoved, arg });
+    }
+
+    void ControllerManager::touchpadPressed(int deviceId, const SDLUtil::TouchEvent& arg)
+    {
+        MWBase::Environment::get().getLuaManager()->inputEvent({ MWBase::LuaManager::InputEvent::TouchPressed, arg });
+    }
+
+    void ControllerManager::touchpadReleased(int deviceId, const SDLUtil::TouchEvent& arg)
+    {
+        MWBase::Environment::get().getLuaManager()->inputEvent({ MWBase::LuaManager::InputEvent::TouchReleased, arg });
+    }
+}

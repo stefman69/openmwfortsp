@@ -1,0 +1,3 @@
+Compiler: /usr/bin/g++-13 (aarch64-linux-gnu)
+/tmp/openmw-manager-v2-v24: ELF 64-bit LSB shared object, ARM aarch64, version 1 (GNU/Linux), dynamically linked, interpreter /lib/ld-linux-aarch64.so.1, BuildID[sha1]=dbf6af2c0df3322446490b153d672a7b9f73a4b0, for GNU/Linux 3.7.0, not stripped
+26899014da42edd86cca6d5a3303203d15730a44ebe6e6cfeca5ba4acbfdb260  /tmp/openmw-manager-v2-v24

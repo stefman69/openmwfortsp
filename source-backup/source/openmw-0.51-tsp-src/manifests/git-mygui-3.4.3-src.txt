@@ -1,0 +1,4 @@
+# repo: mygui-3.4.3-src
+# HEAD:   dae9ac4be5a09e672bec509b1a8552b107c40214
+# branch: tags/MyGUI3.4.3
+# --- status ---

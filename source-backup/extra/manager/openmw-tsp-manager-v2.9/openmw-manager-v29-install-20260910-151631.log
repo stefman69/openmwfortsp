@@ -1,0 +1,312 @@
+============================================================
+OPENMW 0.51 TSP — MANAGER V2.9
+STOCK-OS LAUNCHER FALLBACK + SELF-CONTAINED GENERATOR
+============================================================
+Installs seven device files:
+  <root>/bin/openmw-manager-v2
+  <root>/launcher/openmw-manager-action-v2.sh
+  <root>/launcher/openmw-launcher-backend-v2.py
+  <root>/tools/OpenMW_Generate_Full_Navmesh_3Worker.sh   (new home)
+  <root>/lib/libtsp_sdl_sensor_shim.so                   (stock OS)
+  <PORTS>/OpenMW_Manager.sh
+  <PORTS>/Morrowind.sh
+The standalone generator Ports entry is refreshed only if present.
+
+Never touched: openmw.cfg, mods, saves, navmesh.db, swapfile,
+the clean-path migrator.
+============================================================
+
+===== 1/7 EMIT SOURCES AND RUN HOST SELF-TESTS =====
+EMITTED e352b47a5a3d9ab82824a5dc28a92634acdc6f94faeca22c4a5117a4ebc553ae  /home/bob-simpson/Downloads/openmw-tsp-manager-v2.9/openmw_launcher_manager.cpp
+EMITTED 161e1e7beac4934dcd443b29fb2b386ee91e40b17c6feaf97f639166687a13ac  /home/bob-simpson/Downloads/openmw-tsp-manager-v2.9/openmw_manager_action.sh
+EMITTED 69d7878c2a4cc2d0d6283d4551720499b065b7cd9b9513ccd8d894337fd6927f  /home/bob-simpson/Downloads/openmw-tsp-manager-v2.9/OpenMW_Manager.sh
+EMITTED fced7a3c3b7a001fe287e88402cb51277f03065e8f2b0b7d81125b9e050ed75f  /home/bob-simpson/Downloads/openmw-tsp-manager-v2.9/OpenMW_Generate_Full_Navmesh_3Worker.sh
+EMITTED d6d6bc19b46ac9817aead013a2cbe5285f8d396c67a09e3c71cc4ee0fe34a011  /home/bob-simpson/Downloads/openmw-tsp-manager-v2.9/openmw_launcher_backend.py
+EMITTED d8ef0e824d35cacdf0b952f3efeb81da2c9051f3fe16d1984c6c2aa9de43ef4c  /home/bob-simpson/Downloads/openmw-tsp-manager-v2.9/Morrowind.sh
+EMITTED 98e8aaf5bdeaf6dcf73cdb1732cf7f08f1aeefaf91d9b0729f91017ba234a4d0  /home/bob-simpson/Downloads/openmw-tsp-manager-v2.9/libtsp_sdl_sensor_shim.so
+PASS command: bash
+PASS command: sha256sum
+PASS command: awk
+PASS command: sed
+PASS command: grep
+PASS command: python3
+PASS shell and Python syntax
+PASS navmesh generator keeps the supplied behaviour plus the V2.5/V2.6 fixes
+PASS game launcher keeps its behaviour and carries the ARM64 sensor shim
+PASS SDL sensor probe: stock needs the shim, CrossMix does not
+PASS the navmesh generator is found inside the game build
+PASS first-launch setup is navmesh + swap only
+PASS progress contract and menu markers
+PASS navmesh builder handoff structure
+MARKER=from-launch
+POISON=none
+LDP=none
+SDLRD=none
+PASS generator runs with the pristine Ports launch environment
+PASS handed-back outcome contract matches on both sides
+PASS bounded identity probe (1s) and headless generation
+PASS a build killed during the final VACUUM is reported as complete
+PASS a genuine generator failure is still a failure
+PASS Python backend behaviour selftest and mod-apply wiring
+PASS two progress tracks and mod list controls
+CONTENT_PROBE_PASS
+PASS omwscripts ordering and orphaned-content detection
+OPENMW_MANAGER_V24_ACTION_SELFTEST_PASS
+PASS action backend behaviour selftest
+OPENMW51_MANAGER_V2_SELFTEST_PASS
+OPENMW_MANAGER_V24_PROGRESS_SELFTEST_PASS
+PASS warning-clean host C++ compile + child/progress selftest
+INFO SDL presentation is device-only; Ubuntu is never asked to provide SDL2
+PASS clean-layout path audit
+PASS command: docker
+PASS command: file
+PASS command: ssh
+PASS command: scp
+PASS SSH: root@192.168.1.12
+PASS Docker: openmw_builder
+
+===== 2/7 DEVICE READ-ONLY PREFLIGHT =====
+-rwxrwxrwx    1 root     root         17145 Sep  6 02:01 /mnt/SDCARD/data/ports/openmw/tools/OpenMW_Generate_Full_Navmesh_3Worker.sh
+fced7a3c3b7a001fe287e88402cb51277f03065e8f2b0b7d81125b9e050ed75f  /mnt/SDCARD/data/ports/openmw/tools/OpenMW_Generate_Full_Navmesh_3Worker.sh
+The generator's canonical home after this install is /mnt/SDCARD/data/ports/openmw/tools.
+Existing SDL sensor shim:
+98e8aaf5bdeaf6dcf73cdb1732cf7f08f1aeefaf91d9b0729f91017ba234a4d0  /mnt/SDCARD/data/ports/openmw/lib/libtsp_sdl_sensor_shim.so
+SDL2 the game will load:
+  SENSOR-OK  /usr/lib/libSDL2-2.0.so.0
+PASS game root: /mnt/SDCARD/data/ports/openmw
+PASS Ports directory: /mnt/SDCARD/Roms/PORTS
+Installed manager artifacts:
+5e61f2ee68c7e03737d69be0773fd061ff32c3988d6a6499289d160d6621c541  /mnt/SDCARD/data/ports/openmw/bin/openmw-manager-v2
+3d38016ea92086af295d53871c47d60b513699c07323465726a42a7f3da98591  /mnt/SDCARD/data/ports/openmw/launcher/openmw-manager-action-v2.sh
+69d7878c2a4cc2d0d6283d4551720499b065b7cd9b9513ccd8d894337fd6927f  /mnt/SDCARD/Roms/PORTS/OpenMW_Manager.sh
+Reusable first-launch assets:
+-rwxrwxrwx    1 root     root      891.3M Aug 28 17:04 /mnt/SDCARD/data/ports/openmw/defaults/base-navmesh.db
+-rwxrwxrwx    1 root     root      512.0M Aug 19 23:42 /mnt/SDCARD/data/ports/openmw/defaults/base-swapfile
+
+===== 3/7 BUILD ARM64 MANAGER (FULL OUTPUT) =====
+Compiler: /usr/bin/g++-13 (aarch64-linux-gnu)
+/tmp/openmw-manager-v2-v24: ELF 64-bit LSB shared object, ARM aarch64, version 1 (GNU/Linux), dynamically linked, interpreter /lib/ld-linux-aarch64.so.1, BuildID[sha1]=dbf6af2c0df3322446490b153d672a7b9f73a4b0, for GNU/Linux 3.7.0, not stripped
+26899014da42edd86cca6d5a3303203d15730a44ebe6e6cfeca5ba4acbfdb260  /tmp/openmw-manager-v2-v24
+PASS ARM64 manager binary: 26899014da42edd86cca6d5a3303203d15730a44ebe6e6cfeca5ba4acbfdb260
+PASS action backend:       161e1e7beac4934dcd443b29fb2b386ee91e40b17c6feaf97f639166687a13ac
+PASS Ports wrapper:        69d7878c2a4cc2d0d6283d4551720499b065b7cd9b9513ccd8d894337fd6927f
+PASS navmesh generator:    fced7a3c3b7a001fe287e88402cb51277f03065e8f2b0b7d81125b9e050ed75f
+PASS python backend:       d6d6bc19b46ac9817aead013a2cbe5285f8d396c67a09e3c71cc4ee0fe34a011
+PASS game launcher:        d8ef0e824d35cacdf0b952f3efeb81da2c9051f3fe16d1984c6c2aa9de43ef4c
+PASS SDL sensor shim:      98e8aaf5bdeaf6dcf73cdb1732cf7f08f1aeefaf91d9b0729f91017ba234a4d0
+
+===== 4/7 ALREADY-INSTALLED CHECK =====
+PASS this build differs from what is installed; proceeding
+
+===== 5/7 BACK UP THE THREE REPLACED FILES =====
+PASS verified backup: /mnt/SDCARD/data/ports/openmw/launcher/install-backups/manager-v29-before-20260910-151631
+5e61f2ee68c7e03737d69be0773fd061ff32c3988d6a6499289d160d6621c541  /mnt/SDCARD/data/ports/openmw/launcher/install-backups/manager-v29-before-20260910-151631/manager-bin
+3d38016ea92086af295d53871c47d60b513699c07323465726a42a7f3da98591  /mnt/SDCARD/data/ports/openmw/launcher/install-backups/manager-v29-before-20260910-151631/manager-action
+69d7878c2a4cc2d0d6283d4551720499b065b7cd9b9513ccd8d894337fd6927f  /mnt/SDCARD/data/ports/openmw/launcher/install-backups/manager-v29-before-20260910-151631/manager-wrapper
+d6d6bc19b46ac9817aead013a2cbe5285f8d396c67a09e3c71cc4ee0fe34a011  /mnt/SDCARD/data/ports/openmw/launcher/install-backups/manager-v29-before-20260910-151631/manager-python
+
+===== 6/7 STAGE, INSTALL TRANSACTIONALLY AND SELF-TEST ON DEVICE =====
+No standalone generator Ports entry; the manager uses /mnt/SDCARD/data/ports/openmw/tools.
+PASS Manager V2.9 installed and self-tested on device
+-rwxrwxrwx    1 root     root         62094 Sep 10 15:17 /mnt/SDCARD/Roms/PORTS/Morrowind.sh
+-rwxrwxrwx    1 root     root         10220 Sep 10 15:17 /mnt/SDCARD/Roms/PORTS/OpenMW_Manager.sh
+-rwxrwxrwx    1 root     root       1892472 Sep 10 15:17 /mnt/SDCARD/data/ports/openmw/bin/openmw-manager-v2
+-rwxrwxrwx    1 root     root         55316 Sep 10 15:17 /mnt/SDCARD/data/ports/openmw/launcher/openmw-launcher-backend-v2.py
+-rwxrwxrwx    1 root     root         34506 Sep 10 15:17 /mnt/SDCARD/data/ports/openmw/launcher/openmw-manager-action-v2.sh
+-rwxrwxrwx    1 root     root          8672 Sep 10 15:17 /mnt/SDCARD/data/ports/openmw/lib/libtsp_sdl_sensor_shim.so
+-rwxrwxrwx    1 root     root         17145 Sep 10 15:17 /mnt/SDCARD/data/ports/openmw/tools/OpenMW_Generate_Full_Navmesh_3Worker.sh
+
+===== 7/7 DEVICE STATE AND LOG PULL =====
+--- current manager status.conf ---
+game=1
+udisk=1
+udisk_fs=ext4
+udisk_free=3449425920
+navmesh=1
+navmesh_size=934629376
+navmesh_target=/mnt/UDISK/openmw-nav/navmesh.db
+navmesh_profile=STALE
+profile_hash=c70e8d3f6a34bc7d3b3263101c875fd2a74b277706a8fb18da71c09bacb7219c
+mod_navmesh=MODDED
+default_navmesh_ready=1
+default_navmesh=/mnt/SDCARD/data/ports/openmw/defaults/base-navmesh.db
+default_swap_ready=1
+default_swap=/mnt/SDCARD/data/ports/openmw/defaults/base-swapfile
+swap_file=1
+swap_active=1
+swap_size=536870912
+swap_target=/mnt/UDISK/openmw-swapfile
+mods_total=24
+mods_enabled=15
+plugin_status=VALID
+mods_pending=0
+mods_stale=0
+mods_sync=IN SYNC
+content_orphans=0
+content_status=VALID
+mods_applied=1
+mods_config=/mnt/SDCARD/data/ports/openmw/config/openmw.cfg
+default_mods_ready=0
+default_mods=NOT CHECKED
+config=/mnt/SDCARD/data/ports/openmw/openmw.cfg
+generator=1
+generator_path=/mnt/SDCARD/data/ports/openmw/tools/OpenMW_Generate_Full_Navmesh_3Worker.sh
+
+--- last result ---
+Swap already active: /mnt/UDISK/openmw-swapfile
+
+--- reusable first-launch assets ---
+-rwxrwxrwx    1 root     root      891.3M Aug 28 17:04 /mnt/SDCARD/data/ports/openmw/defaults/base-navmesh.db
+-rwxrwxrwx    1 root     root      512.0M Aug 19 23:42 /mnt/SDCARD/data/ports/openmw/defaults/base-swapfile
+
+--- UDISK ---
+Filesystem                Size      Used Available Use% Mounted on
+/dev/mmcblk0p6            4.9G      1.4G      3.2G  30% /mnt/UDISK
+-rwxrwxrwx    1 root     root      891.3M Sep  5 00:25 /mnt/UDISK/openmw-nav/navmesh.db
+-rw-------    1 root     root      512.0M Sep  4 21:02 /mnt/UDISK/openmw-swapfile
+Filename				Type		Size		Used		Priority
+/mnt/UDISK/openmw-swapfile              file		524284		27396		-2
+
+--- manager log tail (last 120 lines) ---
+===== OpenMW 0.51 Manager V2.5 started: Wed Sep  9 21:36:08 PDT 2026 =====
+======PORT GAMEDIR is /mnt/SDCARD/data/ports/openmw ===============
+/mnt/SDCARD/data/ports/openmw
+/mnt/SDCARD/data/ports/PortMaster/control.txt: line 43: sudo: command not found
+No sudo present.
+Manager display milestone: loading SDL2
+Manager display milestone: SDL2 loaded from libSDL2-2.0.so.0
+Manager display milestone: SDL_Init starting
+Manager display milestone: SDL_Init complete
+LIBGL: Error while gathering supported extension (eglInitialize: EGL_BAD_DISPLAY), default to none
+Looking for entry point eglQueryDevicesEXT...
+Looking for entry point eglGetPlatformDisplayEXT...
+Looking for entry point eglCreateSyncKHR...
+Looking for entry point eglDestroySyncKHR...
+Looking for entry point eglDupNativeFenceFDANDROID...
+Looking for entry point eglWaitSyncKHR...
+Looking for entry point eglClientWaitSyncKHR...
+Looking for entry point eglGetPlatformDisplayEXT...
+0x5586f74ad0
+SDL_CreateWindow:805240832 805240832 1280 720
+LIBGL: Initialising gl4es
+LIBGL: v1.1.5 built on Oct 31 2021 19:44:11
+LIBGL: Using GLES 2.0 backend
+LIBGL: loaded: libGLESv2.so
+LIBGL: loaded: libEGL.so
+LIBGL: loaded: libgbm.so
+LIBGL: loaded: libdrm.so
+LIBGL: Using GLES 2.0 backend
+LIBGL: Targeting OpenGL 2.1
+LIBGL: WARNING, No Limited or Full NPOT support in hardware, Forcing NPOT have no effect!
+LIBGL: Not trying to batch small subsequent glDrawXXXX
+LIBGL: try to use VBO
+LIBGL: Force texture for Attachment color0 on FBO
+LIBGL: Hack to trigger a SwapBuffers when a Full Framebuffer Blit on default FBO is done
+LIBGL: glX Will try to recycle EGL Surface
+LIBGL: Current folder is:/mnt/sdcard/mmcblk1p1/Roms/PORTS
+Manager display milestone: SDL window complete
+Manager display milestone: software renderer complete
+Manager display: SDL2=libSDL2-2.0.so.0 driver=KMSDRM logical=1280x720
+0x55874ad0a0
+============================================================
+Manager V2.4 action: startup
+Started: Wed Sep  9 21:36:09 PDT 2026
+============================================================
+Swap already active: /mnt/UDISK/openmw-swapfile
+Status refreshed: 14 mods, navmesh STALE
+============================================================
+Manager V2.4 action: mod-toggle
+Started: Wed Sep  9 21:36:44 PDT 2026
+============================================================
+Enabled TSPPerformance (not applied yet)
+============================================================
+Manager V2.4 action: mods-apply
+Started: Wed Sep  9 21:36:49 PDT 2026
+============================================================
+Applied 15 mod roots and 4 content files to openmw.cfg
+LIBGL: Shuting down
+Manager request: exit
+===== OpenMW 0.51 Manager V2.5 started: Thu Sep 10 14:04:55 PDT 2026 =====
+======PORT GAMEDIR is /mnt/SDCARD/data/ports/openmw ===============
+/mnt/SDCARD/data/ports/openmw
+/mnt/SDCARD/data/ports/PortMaster/control.txt: line 43: sudo: command not found
+No sudo present.
+Manager display milestone: loading SDL2
+Manager display milestone: SDL2 loaded from libSDL2-2.0.so.0
+Manager display milestone: SDL_Init starting
+Manager display milestone: SDL_Init complete
+LIBGL: Error while gathering supported extension (eglInitialize: EGL_BAD_DISPLAY), default to none
+Looking for entry point eglQueryDevicesEXT...
+Looking for entry point eglGetPlatformDisplayEXT...
+Looking for entry point eglCreateSyncKHR...
+Looking for entry point eglDestroySyncKHR...
+Looking for entry point eglDupNativeFenceFDANDROID...
+Looking for entry point eglWaitSyncKHR...
+Looking for entry point eglClientWaitSyncKHR...
+Looking for entry point eglGetPlatformDisplayEXT...
+0x555ebb46f0
+SDL_CreateWindow:805240832 805240832 1280 720
+LIBGL: Initialising gl4es
+LIBGL: v1.1.5 built on Oct 31 2021 19:44:11
+LIBGL: Using GLES 2.0 backend
+LIBGL: loaded: libGLESv2.so
+LIBGL: loaded: libEGL.so
+LIBGL: loaded: libgbm.so
+LIBGL: loaded: libdrm.so
+LIBGL: Using GLES 2.0 backend
+LIBGL: Targeting OpenGL 2.1
+LIBGL: WARNING, No Limited or Full NPOT support in hardware, Forcing NPOT have no effect!
+LIBGL: Not trying to batch small subsequent glDrawXXXX
+LIBGL: try to use VBO
+LIBGL: Force texture for Attachment color0 on FBO
+LIBGL: Hack to trigger a SwapBuffers when a Full Framebuffer Blit on default FBO is done
+LIBGL: glX Will try to recycle EGL Surface
+LIBGL: Current folder is:/mnt/sdcard/mmcblk1p1/Roms/PORTS
+Manager display milestone: SDL window complete
+Manager display milestone: software renderer complete
+Manager display: SDL2=libSDL2-2.0.so.0 driver=KMSDRM logical=1280x720
+0x555f0ecfb0
+============================================================
+Manager V2.4 action: startup
+Started: Thu Sep 10 14:04:56 PDT 2026
+============================================================
+Swap already active: /mnt/UDISK/openmw-swapfile
+Status refreshed: 15 mods, navmesh STALE
+LIBGL: Shuting down
+Manager request: exit
+
+============================================================
+MANAGER V2.9 INSTALLED
+============================================================
+Binary SHA:    26899014da42edd86cca6d5a3303203d15730a44ebe6e6cfeca5ba4acbfdb260
+Action SHA:    161e1e7beac4934dcd443b29fb2b386ee91e40b17c6feaf97f639166687a13ac
+Wrapper SHA:   69d7878c2a4cc2d0d6283d4551720499b065b7cd9b9513ccd8d894337fd6927f
+Generator SHA: fced7a3c3b7a001fe287e88402cb51277f03065e8f2b0b7d81125b9e050ed75f
+Backend SHA:   d6d6bc19b46ac9817aead013a2cbe5285f8d396c67a09e3c71cc4ee0fe34a011
+Launcher SHA:  d8ef0e824d35cacdf0b952f3efeb81da2c9051f3fe16d1984c6c2aa9de43ef4c
+Shim SHA:      98e8aaf5bdeaf6dcf73cdb1732cf7f08f1aeefaf91d9b0729f91017ba234a4d0
+
+On the device: Ports -> OpenMW_Manager -> SETUP STORAGE ->
+SETUP GAME FOR FIRST LAUNCH.
+Expected: STEP 1 OF 3 copying the navmesh with a moving byte-accurate
+bar, STEP 2 OF 3 swap, STEP 3 OF 3 profile + status, then a COMPLETE
+page you dismiss with A.
+
+NAVMESH BUILDER -> BUILD / UPDATE CURRENT MOD PROFILE now stays in the
+manager and shows the generator's real progress: its 1/7..7/7 steps, then
+PROCESSING CELLS x / 1559, then GENERATING NAVMESH TILES x / 139620,
+then a COMPLETE or FAILED page carrying the generator's exit code.
+
+The standalone OpenMW_Generate_Full_Navmesh_3Worker Ports entry still
+uses its own progress window; only the identity probe and the backup
+space guard changed there. Its canonical copy now lives in <root>/tools,
+so the Ports entry can be deleted without breaking the manager.
+
+The game launcher now runs on stock TrimUI OS as well as CrossMix. It
+reports its decision at startup under SDL2 SENSOR SUPPORT; force it with
+TSP_SDL_SENSOR_SHIM=1 or off with TSP_SDL_SENSOR_SHIM=0.
+
+Diagnostics with full log:   /home/bob-simpson/Downloads/apply_openmw_tsp_manager_v30_texconv.sh collect
+Undo exactly this install:   /home/bob-simpson/Downloads/apply_openmw_tsp_manager_v30_texconv.sh rollback
+Sources kept in:             /home/bob-simpson/Downloads/openmw-tsp-manager-v2.9
+============================================================

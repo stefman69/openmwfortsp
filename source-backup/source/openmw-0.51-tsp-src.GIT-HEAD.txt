@@ -1,0 +1,2 @@
+e37c113f9bd2e57ec5fd18295a32be801dd8d648
+e37c113f TSP_BLANKTEX_V1: a degenerate texture name returns a blank 1x1, not magenta

@@ -1,0 +1,4 @@
+gcc:   gcc (Ubuntu 9.4.0-1ubuntu1~20.04.2) 9.4.0
+cmake: cmake version 4.4.2
+arch:  aarch64
+nproc: 17

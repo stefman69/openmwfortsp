@@ -1,0 +1,2 @@
+/root/openmw-0.51-tsp-src/apps/openmw/mwrender/interiorvisibility.hpp
+/root/openmw-0.51-tsp-src/apps/openmw/mwrender/interiorvisibility.cpp

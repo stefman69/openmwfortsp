@@ -1,0 +1,65 @@
+============================================================
+OPENMW 0.51 TSP — MANAGER V2.9
+STOCK-OS LAUNCHER FALLBACK + SELF-CONTAINED GENERATOR
+============================================================
+Installs seven device files:
+  <root>/bin/openmw-manager-v2
+  <root>/launcher/openmw-manager-action-v2.sh
+  <root>/launcher/openmw-launcher-backend-v2.py
+  <root>/tools/OpenMW_Generate_Full_Navmesh_3Worker.sh   (new home)
+  <root>/lib/libtsp_sdl_sensor_shim.so                   (stock OS)
+  <PORTS>/OpenMW_Manager.sh
+  <PORTS>/Morrowind.sh
+The standalone generator Ports entry is refreshed only if present.
+
+Never touched: openmw.cfg, mods, saves, navmesh.db, swapfile,
+the clean-path migrator.
+============================================================
+
+===== 1/7 EMIT SOURCES AND RUN HOST SELF-TESTS =====
+EMITTED b361457b94ff1af21f7f4febf1a91622f4111b4b020c398911ab40f1449591a2  /home/bob-simpson/Downloads/openmw-tsp-manager-v2.9/openmw_launcher_manager.cpp
+EMITTED 3d38016ea92086af295d53871c47d60b513699c07323465726a42a7f3da98591  /home/bob-simpson/Downloads/openmw-tsp-manager-v2.9/openmw_manager_action.sh
+EMITTED 69d7878c2a4cc2d0d6283d4551720499b065b7cd9b9513ccd8d894337fd6927f  /home/bob-simpson/Downloads/openmw-tsp-manager-v2.9/OpenMW_Manager.sh
+EMITTED fced7a3c3b7a001fe287e88402cb51277f03065e8f2b0b7d81125b9e050ed75f  /home/bob-simpson/Downloads/openmw-tsp-manager-v2.9/OpenMW_Generate_Full_Navmesh_3Worker.sh
+EMITTED d6d6bc19b46ac9817aead013a2cbe5285f8d396c67a09e3c71cc4ee0fe34a011  /home/bob-simpson/Downloads/openmw-tsp-manager-v2.9/openmw_launcher_backend.py
+EMITTED d8ef0e824d35cacdf0b952f3efeb81da2c9051f3fe16d1984c6c2aa9de43ef4c  /home/bob-simpson/Downloads/openmw-tsp-manager-v2.9/Morrowind.sh
+EMITTED 98e8aaf5bdeaf6dcf73cdb1732cf7f08f1aeefaf91d9b0729f91017ba234a4d0  /home/bob-simpson/Downloads/openmw-tsp-manager-v2.9/libtsp_sdl_sensor_shim.so
+PASS command: bash
+PASS command: sha256sum
+PASS command: awk
+PASS command: sed
+PASS command: grep
+PASS command: python3
+PASS shell and Python syntax
+PASS navmesh generator keeps the supplied behaviour plus the V2.5/V2.6 fixes
+PASS game launcher keeps its behaviour and carries the ARM64 sensor shim
+PASS SDL sensor probe: stock needs the shim, CrossMix does not
+PASS the navmesh generator is found inside the game build
+PASS first-launch setup is navmesh + swap only
+PASS progress contract and menu markers
+PASS navmesh builder handoff structure
+MARKER=from-launch
+POISON=none
+LDP=none
+SDLRD=none
+PASS generator runs with the pristine Ports launch environment
+PASS handed-back outcome contract matches on both sides
+PASS bounded identity probe (1s) and headless generation
+PASS a build killed during the final VACUUM is reported as complete
+PASS a genuine generator failure is still a failure
+PASS Python backend behaviour selftest and mod-apply wiring
+PASS two progress tracks and mod list controls
+CONTENT_PROBE_PASS
+PASS omwscripts ordering and orphaned-content detection
+OPENMW_MANAGER_V24_ACTION_SELFTEST_PASS
+PASS action backend behaviour selftest
+OPENMW51_MANAGER_V2_SELFTEST_PASS
+OPENMW_MANAGER_V24_PROGRESS_SELFTEST_PASS
+PASS warning-clean host C++ compile + child/progress selftest
+INFO SDL presentation is device-only; Ubuntu is never asked to provide SDL2
+PASS clean-layout path audit
+PASS command: docker
+PASS command: file
+PASS command: ssh
+PASS command: scp
+ERROR: SSH failed: root@192.168.1.12

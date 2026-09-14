@@ -1,0 +1,29 @@
+--- tsp_ship.sh
++++ tsp_ship.sh
+@@ -66,20 +66,22 @@
+ echo "== md5 port files (paths relative to gamedir)"
+ cd "\$GAMEDIR" 2>/dev/null || exit 1
+ for f in bin/* lib/* libs/* lib.sdl2/* resources/version resources/defaults.bin config*/openmw/settings.cfg config*/openmw/openmw.cfg *.txt *.cfg *.conf *.env; do
+-    case "\$f" in *log*.txt|*perf*|tsp_gltime*|*.tmp*) continue ;; esac
++    case "\$f" in *log*.txt|*perf*|tsp_gltime*|*.tmp*|*before-*|*backup*) continue ;; esac
+     [ -f "\$f" ] && md5sum "\$f"
+ done 2>/dev/null | sort -k2
+ echo "== policy / flag files"
+-ls -la tsp_*policy*.txt tsp_*.txt 2>/dev/null | awk '{print \$5, \$NF}'
++ls -la tsp_*.txt 2>/dev/null | awk '{print \$5, \$NF}'
+ ls -d /mnt/SDCARD/tsp_* 2>/dev/null
+ echo "== mods (name size)"
+ for m in mods/*; do [ -d "\$m" ] && echo "\$(du -sk "\$m" 2>/dev/null | cut -f1) \${m#mods/}"; done 2>/dev/null | sort -k2
+ echo "== resources/shaders md5 (summary)"; find resources/shaders -type f 2>/dev/null | sort | xargs md5sum 2>/dev/null | md5sum | cut -c1-32
++echo "== backup clutter in the port dir (not compared; delete before imaging)"
++for f in bin/*before-* bin/*.cfg.before-* lib/*before-* backups/*; do [ -f "\$f" ] && echo "\$(du -k "\$f" | cut -f1) \$f"; done 2>/dev/null | sort -rn | head -12
+ EOF_REMOTE
+-        $SSH "$H" 'L=/mnt/sdcard/mmcblk1p1/Roms/PORTS/Morrowind.sh; [ -f "$L" ] || L=/mnt/SDCARD/Roms/PORTS/Morrowind.sh; cat "$L"' > "$D/Morrowind.sh" 2>/dev/null
++        $SSH "$H" 'L=/mnt/sdcard/mmcblk1p1/Roms/PORTS/Morrowind.sh; [ -f "$L" ] || L=/mnt/SDCARD/Roms/PORTS/Morrowind.sh; cat "$L"' < /dev/null > "$D/Morrowind.sh" 2>/dev/null
+         say "  $(sed -n 3p "$D/inventory.txt")"
+         say "  launcher: $(grep -A1 '== md5 launcher' "$D/inventory.txt" | tail -1)  ($(wc -l < "$D/Morrowind.sh") lines, TSP_DRAWTHREAD_V1=$(grep -c 'TSP_DRAWTHREAD_V1' "$D/Morrowind.sh") TSP_QUIET_V1=$(grep -c 'TSP_QUIET_V1' "$D/Morrowind.sh") bashisms=$(grep -c '^[[:space:]]*[A-Za-z_][A-Za-z_0-9]*=(\|^[[:space:]]*\[\[\|^[[:space:]]*function \|declare \|\${[A-Za-z_]*\[' "$D/Morrowind.sh"))"
+-        say "  port files hashed: $(sed -n '/== md5 port files/,/== policy/p' "$D/inventory.txt" | grep -c '^[0-9a-f]\{32\}')   mods: $(sed -n '/== mods/,/== resources/p' "$D/inventory.txt" | grep -c '^[0-9]')"
++        say "  port files hashed: $(sed -n '/== md5 port files/,/== policy/p' "$D/inventory.txt" | grep -c '^[0-9a-f]\{32\}')   mods: $(sed -n '/== mods/,/== resources/p' "$D/inventory.txt" | grep -c '^[0-9]')   backup clutter: $(awk '/^== backup clutter/{f=1; next} /^== /{f=0} f {n++; k+=$1} END {printf "%d files %d MB", n, k/1024}' "$D/inventory.txt")"
+         say "  saved: $D/inventory.txt  $D/Morrowind.sh"
+     done
+     hdr "COMPARE  every card against the first listed"

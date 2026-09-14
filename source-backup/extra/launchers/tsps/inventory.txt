@@ -1,0 +1,432 @@
+launcher=/mnt/sdcard/mmcblk1p1/Roms/PORTS/Morrowind.sh
+gamedir=/mnt/SDCARD/data/ports/openmw
+host=Longan cpus=8 sh=/bin/bash bash=/bin/bash
+== md5 launcher
+6c552049ad81d51122ea7b66a8942ef5  Morrowind.sh
+== md5 port files (paths relative to gamedir)
+79fb6431f86e352bd956585e7485c092  bin/defaults.bin
+37e53eb1660cd441643c91882f8027b2  bin/openmw-0.51
+1681b62e1cfb38bce8a96ffdaba92e88  bin/openmw-manager-v2
+13812ca123262a79f4fc2158f557649c  bin/openmw-navmesh-progress
+3d2b4ecb8e75d6f5691737d2768719d5  bin/openmw-navmesh-progress.sdl
+fa940099959290c9b25be1bc02d70c0b  bin/openmw-navmeshtool
+04c107044c9be76f02ce737b53aa05d1  bin/openmw.cfg
+0e849a2ab3d36d39db647454272778a7  config/openmw/openmw.cfg
+2a025fb2cab7d2e7bcdd9fb176b66a88  gamecontrollerdb_tsp.txt
+7d5310b37bae854a78af9c9ea9a558be  lib/libBulletCollision-float64.so.2.88
+21990670ff58d808a86aef9fee860b09  lib/libFLAC.so.8
+c2d2dcabd0598ddfa432a52537b4de2a  lib/libGL.so.1
+dfdfd13138eee03ed56c9cbad36f39f1  lib/libGLX.so.0
+df6ee06eb992a71692bee0a0981d1fa0  lib/libGLdispatch.so.0
+df6ee06eb992a71692bee0a0981d1fa0  lib/libGLdispatch.so.0.0.0
+85d4e37db860d8789e4da66937a29c43  lib/libLinearMath-float64.so.2.88
+652d9fae5fda56da962c5ab5467a7835  lib/libMyGUIEngine.so
+5f343de3672b53009519a96fe9b1fe95  lib/libMyGUIEngine.so.3.4.2
+7ec5a265fb0e39860280dacaab91d2ef  lib/libMyGUIEngine.so.3.4.3
+e9036376b6f8f59e30522eb43fe410cd  lib/libOpenCL.so.1
+e9036376b6f8f59e30522eb43fe410cd  lib/libOpenCL.so.1.0.0
+8f6e90a10e9f51072745c9b3c7402347  lib/libOpenThreads.so
+e22a96f816bdd72987680557959e1043  lib/libOpenThreads.so.21
+e22a96f816bdd72987680557959e1043  lib/libOpenThreads.so.3.3.1
+8b7431ecb6ee30e40da1db703f98a1fc  lib/libX11.so.6
+6ef00a9587fb62dc4037e753713ab6e6  lib/libXau.so.6
+8a261ec47001d0a4298c27f3d087ea62  lib/libXcursor.so.1
+1641ff71f71ad85159bd73479a3a1a8d  lib/libXdmcp.so.6
+021885152e0891f757752155718da1f6  lib/libXext.so.6
+3d0e8504acfcba31dce43db203490b4f  lib/libXfixes.so.3
+27cdf82ed576d8a8466022b2dc5eb0b8  lib/libXi.so.6
+be4c798a912ffbd7368a2f1cb138e3e0  lib/libXinerama.so.1
+76af56c47167d485f86a4f664e141fcf  lib/libXrandr.so.2
+5e69c2ca584a71fce3ec77ed799f6e67  lib/libXrender.so.1
+83e79a99fb8421e300445d99438ae643  lib/libXss.so.1
+ec00952bf69c63a949049a315427b419  lib/libXxf86vm.so.1
+71d2ca73e91dadcda7af77275948e7d5  lib/libaom.so.0
+5636092932fa989690f8e2a401107fa0  lib/libapparmor.so.1
+dcd6ad6232e3fdd8ac9ecde0ecf018c6  lib/libasound.so.2
+87e4467d9558b7f55440ca6b00d54f56  lib/libasyncns.so.0
+2c044779a3ba53acb7accd22cb3b8899  lib/libavcodec.so.58
+2c044779a3ba53acb7accd22cb3b8899  lib/libavcodec.so.58.54.100
+52dce14500969492d82ac279d58ac4e0  lib/libavformat.so.58
+52dce14500969492d82ac279d58ac4e0  lib/libavformat.so.58.29.100
+6df3eeea57f845f480d115ac3b500d08  lib/libavutil.so.56
+6df3eeea57f845f480d115ac3b500d08  lib/libavutil.so.56.31.100
+0b5678a4679cf1978436f8993ca63af3  lib/libblkid.so.1
+0b5678a4679cf1978436f8993ca63af3  lib/libblkid.so.1.1.0
+e99db649b2acc7ef8d5eeb0054fa6730  lib/libbluray.so.2
+e99db649b2acc7ef8d5eeb0054fa6730  lib/libbluray.so.2.2.0
+c2a738893d154fa3d0aa8df0848d86b5  lib/libboost_filesystem.so.1.71.0
+df4c547f124915a63b1ff11ba4007e14  lib/libboost_iostreams.so.1.71.0
+bf69a9bc6efbb2bdfda6657735916040  lib/libboost_program_options.so.1.71.0
+3e45bbd98250757693c8dad347cfe294  lib/libbsd.so.0
+3e45bbd98250757693c8dad347cfe294  lib/libbsd.so.0.10.0
+4e91580a6dec524183edc66783fa18ad  lib/libbz2.so.1.0
+4e91580a6dec524183edc66783fa18ad  lib/libbz2.so.1.0.4
+be3e6b9ceb344842c6fe8d0cc83a7be9  lib/libcairo-gobject.so.2
+be3e6b9ceb344842c6fe8d0cc83a7be9  lib/libcairo-gobject.so.2.11600.0
+6880b8a961c1eeb0a6e75da693314e90  lib/libcairo.so.2
+6880b8a961c1eeb0a6e75da693314e90  lib/libcairo.so.2.11600.0
+84c878ce8d8c548f3d3996c525f75708  lib/libchromaprint.so.1
+84c878ce8d8c548f3d3996c525f75708  lib/libchromaprint.so.1.4.3
+5e37da2f7a61dd498c633ce53922d152  lib/libcodec2.so.0.9
+9053963e6f9d6f7c5f8b1717b40752a0  lib/libcollada-dom2.4-dp.so.2.4.4
+8782100c4253483695fcbcaed8eecc1a  lib/libcom_err.so.2
+8782100c4253483695fcbcaed8eecc1a  lib/libcom_err.so.2.1
+20afb7e77c4b4b05a2cc25800519f583  lib/libdatrie.so.1
+20afb7e77c4b4b05a2cc25800519f583  lib/libdatrie.so.1.3.5
+412ff3dfb1f51cda0a68a08f9b62f78c  lib/libdbus-1.so.3
+e87f56d201291d9bad7bcb87c4561b8f  lib/libdrm.so.2
+579d67763127ddf5a242be8160c3df01  lib/libexpat.so.1
+579d67763127ddf5a242be8160c3df01  lib/libexpat.so.1.6.11
+099e3b01097415cded39a3f682829929  lib/libffi.so.7
+099e3b01097415cded39a3f682829929  lib/libffi.so.7.1.0
+44c4e87d4e63a1475b9df793b1fb9aef  lib/libfontconfig.so.1
+44c4e87d4e63a1475b9df793b1fb9aef  lib/libfontconfig.so.1.12.0
+3b356cc48dd3c34c0f0389b04f95f189  lib/libfreetype.so.6
+3b356cc48dd3c34c0f0389b04f95f189  lib/libfreetype.so.6.17.1
+8d93a9b5a626cf627aecdecf7c014632  lib/libfribidi.so.0
+8d93a9b5a626cf627aecdecf7c014632  lib/libfribidi.so.0.4.0
+bd175d82e2388414a97773cd99cda9ea  lib/libgcc_s.so.1
+8ff5da6f1befe5db9bcc2c345e9787a3  lib/libgcrypt.so.20
+8ff5da6f1befe5db9bcc2c345e9787a3  lib/libgcrypt.so.20.2.5
+a0ca15d3132a76ca4ff084181e0c14c4  lib/libgdk_pixbuf-2.0.so.0
+a0ca15d3132a76ca4ff084181e0c14c4  lib/libgdk_pixbuf-2.0.so.0.4000.0
+8aa89c0089e5dd9ccfb02de6cef5347f  lib/libgio-2.0.so.0
+8aa89c0089e5dd9ccfb02de6cef5347f  lib/libgio-2.0.so.0.6400.6
+d8341aa3e73ce1b1ae4e361baa8f2870  lib/libglib-2.0.so.0
+d8341aa3e73ce1b1ae4e361baa8f2870  lib/libglib-2.0.so.0.6400.6
+10dfba20d48d67388a2fe6359ea0cc29  lib/libgme.so.0
+10dfba20d48d67388a2fe6359ea0cc29  lib/libgme.so.0.6.2
+8f4b3c1f99e53bd9f1f568f1da5d29ef  lib/libgmodule-2.0.so.0
+8f4b3c1f99e53bd9f1f568f1da5d29ef  lib/libgmodule-2.0.so.0.6400.6
+ef03f02ccea7437a2686fccab5764101  lib/libgmp.so.10
+ef03f02ccea7437a2686fccab5764101  lib/libgmp.so.10.4.0
+202f092f508fcdc4f427d292cb3b5be5  lib/libgnutls.so.30
+202f092f508fcdc4f427d292cb3b5be5  lib/libgnutls.so.30.27.0
+dea8d667a1777140699c56c44071208c  lib/libgobject-2.0.so.0
+dea8d667a1777140699c56c44071208c  lib/libgobject-2.0.so.0.6400.6
+e4d46bfdf032794e98c7646c12d4b0c3  lib/libgomp.so.1
+e4d46bfdf032794e98c7646c12d4b0c3  lib/libgomp.so.1.0.0
+509ff54e58551b3a4b0d837fbdafa793  lib/libgpg-error.so.0
+509ff54e58551b3a4b0d837fbdafa793  lib/libgpg-error.so.0.28.0
+d589b5c0ae2e79bcbbfefd882f487b5a  lib/libgraphite2.so.3
+d589b5c0ae2e79bcbbfefd882f487b5a  lib/libgraphite2.so.3.2.1
+6cc998d2977b6740ed6623f4a9d92d49  lib/libgsm.so.1
+6cc998d2977b6740ed6623f4a9d92d49  lib/libgsm.so.1.0.18
+a6919871f7e781f050efd211204ce01c  lib/libgssapi_krb5.so.2
+a6919871f7e781f050efd211204ce01c  lib/libgssapi_krb5.so.2.2
+0d6825ab55212512524068356c115788  lib/libharfbuzz.so.0
+0d6825ab55212512524068356c115788  lib/libharfbuzz.so.0.20600.4
+49367acd955b8611c65333608e6d2ffe  lib/libhogweed.so.5
+49367acd955b8611c65333608e6d2ffe  lib/libhogweed.so.5.0
+287a3802122af400b208757b0d2cdac3  lib/libicudata.so.66
+287a3802122af400b208757b0d2cdac3  lib/libicudata.so.66.1
+f322f332f1b22db8466284d9c5634b87  lib/libicui18n.so.66
+f322f332f1b22db8466284d9c5634b87  lib/libicui18n.so.66.1
+c04d8282ed0ea0604b263a137c747cff  lib/libicuuc.so.66
+c04d8282ed0ea0604b263a137c747cff  lib/libicuuc.so.66.1
+52c51448dae004ad3a18c51bdfcd8fa2  lib/libidn2.so.0
+52c51448dae004ad3a18c51bdfcd8fa2  lib/libidn2.so.0.3.6
+6ea51df933b00836fbbb20e9512238a0  lib/libjpeg.so.8.2.2
+b3c826b9b03585efe1ee822398b9c253  lib/libk5crypto.so.3
+b3c826b9b03585efe1ee822398b9c253  lib/libk5crypto.so.3.1
+04e33e6d95f6c69b984d6633d905554a  lib/libkeyutils.so.1
+04e33e6d95f6c69b984d6633d905554a  lib/libkeyutils.so.1.8
+5eef6b190f15923481a645248e5f5e61  lib/libkrb5.so.3
+5eef6b190f15923481a645248e5f5e61  lib/libkrb5.so.3.3
+efcefb834e4a70a5731b026c436dbacb  lib/libkrb5support.so.0
+efcefb834e4a70a5731b026c436dbacb  lib/libkrb5support.so.0.1
+42dc3a650aade6b64505d2e6051444ac  lib/libluajit-5.1.so.2
+42dc3a650aade6b64505d2e6051444ac  lib/libluajit-5.1.so.2.1.0
+6433a50ea02ade85fdfefed14b2b445d  lib/liblz4.so.1
+6433a50ea02ade85fdfefed14b2b445d  lib/liblz4.so.1.9.2
+92d665372862ebaabf4a740da344b0fa  lib/liblzma.so.5
+92d665372862ebaabf4a740da344b0fa  lib/liblzma.so.5.2.4
+6d1feaeec200702fe5ed82d5709bba70  lib/libminizip.so.1.0.0
+fa21f1b57ac7d19188c2ca716865f520  lib/libmount.so.1
+fa21f1b57ac7d19188c2ca716865f520  lib/libmount.so.1.1.0
+c20b029ff0d1c90f9f6688f33da887b7  lib/libmp3lame.so.0
+c20b029ff0d1c90f9f6688f33da887b7  lib/libmp3lame.so.0.0.0
+494245349979813b2f7f5df27043f4c4  lib/libmpg123.so.0
+494245349979813b2f7f5df27043f4c4  lib/libmpg123.so.0.44.10
+a550e8dc3c3141074dd2cba2bef90a03  lib/libnettle.so.7
+a550e8dc3c3141074dd2cba2bef90a03  lib/libnettle.so.7.0
+3f2ea73cc9b5942f6522473f3d42fad9  lib/libnsl.so.1
+29fe3542f4c0b2d9867577096d4ead6e  lib/libnuma.so.1
+29fe3542f4c0b2d9867577096d4ead6e  lib/libnuma.so.1.0.0
+11ff3fa6166a15477eb79245553b8fc0  lib/libogg.so.0
+11ff3fa6166a15477eb79245553b8fc0  lib/libogg.so.0.8.4
+fce128de76974b7853d5200657d60786  lib/libopenal.so.1
+fce128de76974b7853d5200657d60786  lib/libopenal.so.1.19.1
+c75b4d14655c77ade2223ecbcedd07a5  lib/libopenjp2.so.2.3.1
+c75b4d14655c77ade2223ecbcedd07a5  lib/libopenjp2.so.7
+d5e137ae82e5a4815257f9bbda6040f1  lib/libopenmpt.so.0
+d5e137ae82e5a4815257f9bbda6040f1  lib/libopenmpt.so.0.1.1
+6452f8f95749b8ca9b030755a94c98ed  lib/libopus.so.0
+6452f8f95749b8ca9b030755a94c98ed  lib/libopus.so.0.8.0
+ad4e06273c7536db5936711eff33dc28  lib/libosg.so
+d1c4b17a00f9bc9e41c44675fcc63e2f  lib/libosg.so.162
+d1c4b17a00f9bc9e41c44675fcc63e2f  lib/libosg.so.3.6.5
+fd633cd8ce9b35c16e81b2a49bd7ab94  lib/libosgAnimation.so
+354b214be87a4a208287d5f164ee553c  lib/libosgAnimation.so.162
+354b214be87a4a208287d5f164ee553c  lib/libosgAnimation.so.3.6.5
+8ee34308459cb291b2ef6c61f375ed21  lib/libosgAnimation.so.3.6.5.filepart
+afa6ac1d9c6692a2666e79e68e0304f8  lib/libosgDB.so
+6559503dd2de6992c1a6a6556af3d220  lib/libosgDB.so.162
+6559503dd2de6992c1a6a6556af3d220  lib/libosgDB.so.3.6.5
+9d6281f8fcd5829dbb5902a2e2a6c92b  lib/libosgFX.so
+f7613f3309520676345c52c47918ac82  lib/libosgFX.so.162
+f7613f3309520676345c52c47918ac82  lib/libosgFX.so.3.6.5
+fa69570da686ea9df910b9ea1cefb35b  lib/libosgGA.so
+c25a9e56889cad9a0228acbbde389c0c  lib/libosgGA.so.162
+c25a9e56889cad9a0228acbbde389c0c  lib/libosgGA.so.3.6.5
+71e6f17579cda25f526d27f3f611e10b  lib/libosgManipulator.so
+cdf699221298a932161271d2ab10de6f  lib/libosgManipulator.so.162
+cdf699221298a932161271d2ab10de6f  lib/libosgManipulator.so.3.6.5
+0de8143c7aef05355c8fab551791cf38  lib/libosgParticle.so
+085c43f391ac1f5703189e89205f2259  lib/libosgParticle.so.162
+085c43f391ac1f5703189e89205f2259  lib/libosgParticle.so.3.6.5
+e76f32295e59509ad5108d51643a0c58  lib/libosgPresentation.so
+87b3b36dee03e875e86c6b7fa0c51720  lib/libosgPresentation.so.162
+87b3b36dee03e875e86c6b7fa0c51720  lib/libosgPresentation.so.3.6.5
+051c60cff5e0b6432e198548e11cd854  lib/libosgShadow.so
+7ce435ac3199e9738e7650c96fe64f11  lib/libosgShadow.so.162
+7ce435ac3199e9738e7650c96fe64f11  lib/libosgShadow.so.3.6.5
+feb46a1c7ace709009825d1841a1d6cf  lib/libosgSim.so
+502a807969ea5489a5a2342ed94acbdd  lib/libosgSim.so.162
+502a807969ea5489a5a2342ed94acbdd  lib/libosgSim.so.3.6.5
+3848672d2939f84f00f67864c50dd583  lib/libosgTerrain.so
+8fdce961a87e9d58bb34649bba09e469  lib/libosgTerrain.so.162
+8fdce961a87e9d58bb34649bba09e469  lib/libosgTerrain.so.3.6.5
+48c60794ecbbc6f68a12f40b9cc982b6  lib/libosgText.so
+9fc0a0ca2f0015d8b4abeeb8a5b8fd71  lib/libosgText.so.162
+9fc0a0ca2f0015d8b4abeeb8a5b8fd71  lib/libosgText.so.3.6.5
+8c980d62e7cef4b025d2a7800406f569  lib/libosgUI.so
+1c02cf2472ac60fb318d8f71b609764d  lib/libosgUI.so.162
+1c02cf2472ac60fb318d8f71b609764d  lib/libosgUI.so.3.6.5
+217e13613c63df49794799961e59f4d4  lib/libosgUtil.so
+5561ea2ce1c735f4db502fdfbec99888  lib/libosgUtil.so.162
+5561ea2ce1c735f4db502fdfbec99888  lib/libosgUtil.so.3.6.5
+64f2f7a571c4a778e980848b8118b784  lib/libosgViewer.so
+6bae4ba99d96b529ff36bcad5ac9207e  lib/libosgViewer.so.162
+6bae4ba99d96b529ff36bcad5ac9207e  lib/libosgViewer.so.3.6.5
+4fe0774e99e7d3c521756f001fce8843  lib/libosgVolume.so
+53bac1bf21c4ecdf7935c1f695c38c90  lib/libosgVolume.so.162
+53bac1bf21c4ecdf7935c1f695c38c90  lib/libosgVolume.so.3.6.5
+6f71b8e8825475b6f68079a5b9a6308f  lib/libosgWidget.so
+12e1183aff2d9206c652c01611eca657  lib/libosgWidget.so.162
+12e1183aff2d9206c652c01611eca657  lib/libosgWidget.so.3.6.5
+d383fc1c202bc9f0b95ccf1c6acccff0  lib/libp11-kit.so.0
+d383fc1c202bc9f0b95ccf1c6acccff0  lib/libp11-kit.so.0.3.0
+c9724ac79625c7e797e124a8205de279  lib/libpango-1.0.so.0
+c9724ac79625c7e797e124a8205de279  lib/libpango-1.0.so.0.4400.7
+45802362644d89cf4b0937042f6f6ab1  lib/libpangocairo-1.0.so.0
+45802362644d89cf4b0937042f6f6ab1  lib/libpangocairo-1.0.so.0.4400.7
+a06e2c7615687ebeb9f1c003e41096ca  lib/libpangoft2-1.0.so.0
+a06e2c7615687ebeb9f1c003e41096ca  lib/libpangoft2-1.0.so.0.4400.7
+45b522df5dd235eea4c8f79a3a3f82d2  lib/libpcre.so.3
+45b522df5dd235eea4c8f79a3a3f82d2  lib/libpcre.so.3.13.3
+95f910574970156e1b83eb71768ac4e2  lib/libpcre2-8.so.0
+95f910574970156e1b83eb71768ac4e2  lib/libpcre2-8.so.0.9.0
+bf011f7a5bcfffe9617e660d07d1f0b6  lib/libpixman-1.so.0
+bf011f7a5bcfffe9617e660d07d1f0b6  lib/libpixman-1.so.0.38.4
+148b13b786203689d3d3856b7683eb2f  lib/libpng16.so.16
+148b13b786203689d3d3856b7683eb2f  lib/libpng16.so.16.37.0
+ee4b22f6314b9a75bcb5bfd7d117f15c  lib/libpulse.so.0
+c14a8869aa8462b5551eecf83bf7a69b  lib/libpulsecommon-13.99.so
+e78574adb19111d0985f4874366fb09b  lib/libresolv.so.2
+a8c32046099a2fe85de165035e10e17d  lib/librsvg-2.so.2
+a8c32046099a2fe85de165035e10e17d  lib/librsvg-2.so.2.47.0
+a450cadcecded10bcf19df26f44bce16  lib/libselinux.so.1
+94bd05165b2dceb0ddd1b21d225d8b06  lib/libshine.so.3
+94bd05165b2dceb0ddd1b21d225d8b06  lib/libshine.so.3.0.1
+0b111d8a74de9cd452ab331fa3b81a31  lib/libsnappy.so.1
+0b111d8a74de9cd452ab331fa3b81a31  lib/libsnappy.so.1.1.8
+4eef79f33e14828d9ac4582ce5cc5eb5  lib/libsndfile.so.1
+1b398e0c795fd515fd3b8ada74373c49  lib/libsndio.so.7.0
+45877a27f047d37cd18f4260e2349ab1  lib/libsoxr.so.0
+45877a27f047d37cd18f4260e2349ab1  lib/libsoxr.so.0.1.2
+a709231417f98016775873a37e46d690  lib/libspeex.so.1
+a709231417f98016775873a37e46d690  lib/libspeex.so.1.5.0
+85393a48c728d6713ca0094142993ba0  lib/libsqlite3.so.0
+85393a48c728d6713ca0094142993ba0  lib/libsqlite3.so.0.8.6
+4ae95ffb5775e9d86c1743628b021615  lib/libssh-gcrypt.so.4
+4ae95ffb5775e9d86c1743628b021615  lib/libssh-gcrypt.so.4.8.4
+881971b3fb9ded71608a8583139a7cb0  lib/libstdc++.so.6
+881971b3fb9ded71608a8583139a7cb0  lib/libstdc++.so.6.0.35
+f28f8a12ba0d34259b9c5e19498bcdd6  lib/libstdc++.sonocursor.6
+2babe847fd7fcf19a46b5abf1f48f931  lib/libswresample.so.3
+2babe847fd7fcf19a46b5abf1f48f931  lib/libswresample.so.3.5.100
+c387f223185f2da5e741184d25ab2570  lib/libswscale.so.5
+c387f223185f2da5e741184d25ab2570  lib/libswscale.so.5.5.100
+22cb03cf82c302b34d00b7234ca28774  lib/libsystemd.so.0
+d2cef9f95cdbce223f258b9d6b8002a8  lib/libtasn1.so.6
+d2cef9f95cdbce223f258b9d6b8002a8  lib/libtasn1.so.6.6.0
+1650c22ab451aaddc47761ceefc60080  lib/libthai.so.0
+1650c22ab451aaddc47761ceefc60080  lib/libthai.so.0.3.1
+71d3b36943bf5bf4600b5633e4745415  lib/libtheoradec.so.1
+71d3b36943bf5bf4600b5633e4745415  lib/libtheoradec.so.1.1.4
+83624e572d14f1eadca4678b7245c74d  lib/libtheoraenc.so.1
+83624e572d14f1eadca4678b7245c74d  lib/libtheoraenc.so.1.1.2
+67df0726666a414f441de1973f4a69d6  lib/libtinyxml.so.2.6.2
+1bdf989199a5ec7f0b1c46e96effb03d  lib/libtsp_crash.so
+39720d1d9f975a0e99b21bdbdb60c40e  lib/libtsp_diag.so
+12ef87daf77ef6ade68a923f370e0808  lib/libtsp_diag.so.presplit
+8dca39a35df5faa48ecef588c57e558e  lib/libtsp_drawstate.so
+9dcaa8bd0957709febad56045605a593  lib/libtsp_files.so
+c6ec00b2af6a8159c7380c044dcc5ef7  lib/libtsp_frameprof.so
+2f1e2d09a0855a9138e401dc2b686808  lib/libtsp_fullscreen_scaler.so
+5881c66dabb2e62b5904e76513092baf  lib/libtsp_gltime.so
+dfa7b63b4e24e52f5c1e2929f490775d  lib/libtsp_glwatch.so
+f7dd4c2d48216a6fac89a2e40289fac3  lib/libtsp_mpwatch.so
+2442d7c30d6308ae6e5f8f2584f730cf  lib/libtsp_sdl_sensor_shim.so
+1009132b505ff0c2fee869fe3819829e  lib/libtsp_state.so
+fcb4879187e49f9c20791c5d2368c401  lib/libtsp_vpwatch.so
+332f0c777de74332ea8909c6d2f01ed6  lib/libtsp_warm.so
+9955cac11f59e24ba8aa7167ab273376  lib/libtwolame.so.0
+9955cac11f59e24ba8aa7167ab273376  lib/libtwolame.so.0.0.0
+842ea4bc5f988057351a858b5c4d0e4a  lib/libunistring.so.2
+842ea4bc5f988057351a858b5c4d0e4a  lib/libunistring.so.2.1.0
+5dc216cd74fb8582cb8184872983471e  lib/liburiparser.so.1.0.26
+ef1d186eb960b8675ae9ff04151a385f  lib/libuuid.so.1
+ef1d186eb960b8675ae9ff04151a385f  lib/libuuid.so.1.3.0
+92910ed1fbf081d2638c3d4bde9c9706  lib/libva-drm.so.2
+92910ed1fbf081d2638c3d4bde9c9706  lib/libva-drm.so.2.700.0
+0a988b29b7fa1afee729aa2e338ffbbb  lib/libva-x11.so.2
+0a988b29b7fa1afee729aa2e338ffbbb  lib/libva-x11.so.2.700.0
+4436f2fdde85cafb12fa858ba42f58d9  lib/libva.so.2
+4436f2fdde85cafb12fa858ba42f58d9  lib/libva.so.2.700.0
+52c35e65d46c5f3aa1342ea66a993b82  lib/libvdpau.so.1
+52c35e65d46c5f3aa1342ea66a993b82  lib/libvdpau.so.1.0.0
+d40fa9231e556a2b97b81ca5f661fad0  lib/libvorbis.so.0
+d40fa9231e556a2b97b81ca5f661fad0  lib/libvorbis.so.0.4.8
+fd4c3aa42957fa37c74e81aa026705a9  lib/libvorbisenc.so.2
+fd4c3aa42957fa37c74e81aa026705a9  lib/libvorbisenc.so.2.0.11
+7a337806dd5d5e68ff19484190b345bd  lib/libvorbisfile.so.3
+7a337806dd5d5e68ff19484190b345bd  lib/libvorbisfile.so.3.3.7
+e52bf6488a3f438d110619101e22bc7a  lib/libvpx.so.6
+e52bf6488a3f438d110619101e22bc7a  lib/libvpx.so.6.2.0
+cb6ad4c5a47dfa175f5cdbec5457c5b9  lib/libwavpack.so.1
+cb6ad4c5a47dfa175f5cdbec5457c5b9  lib/libwavpack.so.1.2.1
+98cafe957a7116598871fa43cf3943cb  lib/libwayland-client.so.0
+15f2d699639044213e40e779d00cb56f  lib/libwayland-cursor.so.0
+bf7478f0f1d1d257fc6c6bee5f2c02dd  lib/libwayland-egl.so.1
+cbc6f3b0a3a28369d259ce30afde1dc5  lib/libwebp.so.6
+cbc6f3b0a3a28369d259ce30afde1dc5  lib/libwebp.so.6.0.2
+6de15eaec6c29ed3bae900b2cca3957a  lib/libwebpmux.so.3
+6de15eaec6c29ed3bae900b2cca3957a  lib/libwebpmux.so.3.0.1
+d3565bf2825c973a2f28a6d6937b33e5  lib/libwrap.so.0
+b307e886574bb0f606adf3335236e182  lib/libx264.so.155
+5162a4b0637fe598d7a5debafa51011f  lib/libx265.so.179
+bfbe75390dbbbf8573958f17b667fd77  lib/libxcb-render.so.0
+8bae06cecafc70ab18c713967bdab555  lib/libxcb-shm.so.0
+99a0cbef147d0c7220ca4fc25855e5c8  lib/libxcb.so.1
+6faa1b7d2f2b46f63b39d7f135b7ba47  lib/libxkbcommon.so.0
+89cc7e16ded1b638e8c5de38cbf19057  lib/libxml2.so.2
+89cc7e16ded1b638e8c5de38cbf19057  lib/libxml2.so.2.9.10
+8aa1f1e5089d749a9689772675c3ba68  lib/libxvidcore.so.4
+8aa1f1e5089d749a9689772675c3ba68  lib/libxvidcore.so.4.3
+6bbe41e91edde417eef30b626aa5b382  lib/libyaml-cpp.so.0.6
+6bbe41e91edde417eef30b626aa5b382  lib/libyaml-cpp.so.0.6.2
+dcfbfb673a272430285d45073ac53bbe  lib/libz.so.1
+dcfbfb673a272430285d45073ac53bbe  lib/libz.so.1.2.11
+761b3f79a7d77c82c2ab632ed8eb50d9  lib/libzstd.so.1
+0977235969a307767daac66999a8bbad  lib/libzvbi.so.0
+0977235969a307767daac66999a8bbad  lib/libzvbi.so.0.13.2
+4b61b3295a22803202a282e7da5088c8  openmw.base.cfg
+04c107044c9be76f02ce737b53aa05d1  openmw.cfg
+694442c93f815ec5f463588a8d9200a7  openmw_crash.txt
+79fb6431f86e352bd956585e7485c092  resources/defaults.bin
+b9c136e58c1519cf53e65aa037e5f240  resources/version
+4813e8c29c6d70aba916b7f20c5c7465  tsp_lever_policy.txt
+897316929176464ebc9ad085f31e7284  tsp_texture_shrink_mode.txt
+51a6d96331d5eaa300358c7a0faf168d  tsp_ui_font_size.txt
+== policy / flag files
+11 tsp_lever_policy.txt
+2 tsp_texture_shrink_mode.txt
+3 tsp_ui_font_size.txt
+/mnt/SDCARD/tsp_cells_off.awk
+/mnt/SDCARD/tsp_cells_on.awk
+/mnt/SDCARD/tsp_cleanup.sh
+/mnt/SDCARD/tsp_cleanup2.sh
+/mnt/SDCARD/tsp_gamepause_fn.sh
+/mnt/SDCARD/tsp_gamepause_install.sh
+/mnt/SDCARD/tsp_gltime.txt
+/mnt/SDCARD/tsp_hitch.sh
+/mnt/SDCARD/tsp_hitch2.sh
+/mnt/SDCARD/tsp_hitch_archive_20260910-163759
+/mnt/SDCARD/tsp_hitch_archive_20260910-202814
+/mnt/SDCARD/tsp_hitch_archive_20260910-210338
+/mnt/SDCARD/tsp_hitch_archive_20260910-213252
+/mnt/SDCARD/tsp_hitch_archive_20260910-213911
+/mnt/SDCARD/tsp_hitch_archive_20260910-214104
+/mnt/SDCARD/tsp_hitch_archive_20260910-225401
+/mnt/SDCARD/tsp_hitch_archive_20260910-231247
+/mnt/SDCARD/tsp_hitch_archive_20260910-233545
+/mnt/SDCARD/tsp_hitch_archive_20260910-235051
+/mnt/SDCARD/tsp_hitch_archive_20260910-235359
+/mnt/SDCARD/tsp_hitch_archive_20260911-023919
+/mnt/SDCARD/tsp_hitch_archive_20260911-024449
+/mnt/SDCARD/tsp_intocc.env
+/mnt/SDCARD/tsp_intocc.env.before-restore-20260912-004050
+/mnt/SDCARD/tsp_iotune.conf
+/mnt/SDCARD/tsp_iotune.conf.bak-memsplit-20260910-235051
+/mnt/SDCARD/tsp_iotune.conf.bak-memsplit-20260910-235243
+/mnt/SDCARD/tsp_iotune.conf.bak-memsplit-20260910-235359
+/mnt/SDCARD/tsp_iotune.conf.bak-relief-20260911-003839
+/mnt/SDCARD/tsp_iotune.conf.bak-revert-20260911-024449
+/mnt/SDCARD/tsp_iotune.conf.bak-sndfix-20260911-025245
+/mnt/SDCARD/tsp_iotune.conf.before-ktxab-20260910-213911
+/mnt/SDCARD/tsp_iotune.conf.before-ktxab-20260910-214104
+/mnt/SDCARD/tsp_iowatch_off
+/mnt/SDCARD/tsp_ip.txt
+/mnt/SDCARD/tsp_ktx_mem.txt
+/mnt/SDCARD/tsp_ktxband_pass2.list
+/mnt/SDCARD/tsp_ktxwarm_off
+/mnt/SDCARD/tsp_mem_astc_noshrink.txt
+/mnt/SDCARD/tsp_memreport.sh
+/mnt/SDCARD/tsp_memwatch.pid
+/mnt/SDCARD/tsp_memwatch.sh
+/mnt/SDCARD/tsp_memwatch.txt
+/mnt/SDCARD/tsp_memwatch_ktx.sh
+/mnt/SDCARD/tsp_post.sh
+/mnt/SDCARD/tsp_prgcache
+/mnt/SDCARD/tsp_prog.txt
+/mnt/SDCARD/tsp_ring
+/mnt/SDCARD/tsp_ring.conf
+/mnt/SDCARD/tsp_ring.conf.claude-wrote-20260910-173804
+/mnt/SDCARD/tsp_ring_off
+/mnt/SDCARD/tsp_ring_off.parked-20260910-185842
+/mnt/SDCARD/tsp_scan.sh
+/mnt/SDCARD/tsp_scan_candidates.txt
+/mnt/SDCARD/tsp_shader_variants.txt
+/mnt/SDCARD/tsp_sleepwatch.txt
+/mnt/SDCARD/tsp_strip.sh
+/mnt/SDCARD/tsp_swapbench
+/mnt/SDCARD/tsp_swaptune_off
+/mnt/SDCARD/tsp_texconv_smoke
+/mnt/SDCARD/tsp_thermsnap.sh
+/mnt/SDCARD/tsp_vsync.sh
+/mnt/SDCARD/tsp_warm.txt
+/mnt/SDCARD/tsp_zram_off
+== mods (name size)
+465664 Morrowind Optimization Patch
+514432 Project Atlas
+12032 TSPAtlasGlobalV02
+3328 TSPAtlasShrunk
+349184 TSPInteriorVisGrid
+2944 TSPPerformance
+== resources/shaders md5 (summary)
+1d569f189c0c6d5994a3546f2db68638
+== backup clutter in the port dir (not compared; delete before imaging)
+55552 bin/openmw-0.51.before-soundkill-20260911-141442
+55552 bin/openmw-0.51.before-sndwarmv2-20260911-032337
+55552 bin/openmw-0.51.before-pinksky-20260912-030018
+55552 bin/openmw-0.51.before-heaptrim-20260912-001024
+55552 bin/openmw-0.51.before-blanktex-20260912-141537
+55552 backups/openmw-0.51.before-sndwarm-20260910-030306
+55552 backups/openmw-0.51.before-ktx-20260910-040121
+1920 backups/libGL.so.1.before-orphan-20260913-014753
+128 bin/openmw.cfg.before-weatherfix-20260912-140057
+128 bin/openmw.cfg.before-weatherfix-20260912-140057
+128 backups/dynamic_view.lua.before-fpsavg-20260910-034112
+128 backups/Morrowind.sh.drawthread-removed-20260913-160510

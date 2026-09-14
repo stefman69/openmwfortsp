@@ -1,0 +1,18 @@
+--- tsp_drawthread_v1.sh
++++ tsp_drawthread_v1.sh
+@@ -363,11 +363,11 @@
+ NAME=\$1
+ echo "  launcher: \$L  marker=\$(grep -c $MARK "\$L")  ncpu=\$NCPU online=\$(cat /sys/devices/system/cpu/online 2>/dev/null)  policy=[\$(cat "\$POL" 2>/dev/null | tr '\\n' ' ')]"
+ for c in 0 4 5; do f=/sys/devices/system/cpu/cpu\$c/cpufreq; [ -d \$f ] && echo "  cpu\$c online=\$(cat /sys/devices/system/cpu/cpu\$c/online 2>/dev/null || echo 1) cur_khz=\$(cat \$f/scaling_cur_freq 2>/dev/null) gov=\$(cat \$f/scaling_governor 2>/dev/null)"; done
+-echo "  -- \$PROG (last TSP_CPUCLOCK_V1 line, then the last 6 TSP_DRAWTHREAD_V1 lines: core / armed / samples) --"
+-grep TSP_CPUCLOCK_V1 "\$PROG" 2>/dev/null | tail -1 | sed 's/^/    /'
+-grep TSP_DRAWTHREAD_V1 "\$PROG" 2>/dev/null | tail -6 | sed 's/^/    /'
+-[ "\$(grep -c TSP_DRAWTHREAD_V1 "\$PROG" 2>/dev/null)" = 0 ] && echo "    (none: no launch since the patch, or the launcher never reached the launch line)"
+ LOG="\$GAMEDIR/openmw_log.txt"
++echo "  -- proof lines (\$PROG + openmw_log.txt; quiet mode writes them to the log only): last TSP_CPUCLOCK_V1, last 6 TSP_DRAWTHREAD_V1 core/armed/sample --"
++grep -h TSP_CPUCLOCK_V1 "\$PROG" "\$LOG" 2>/dev/null | tail -1 | sed 's/^/    /'
++grep -h 'TSP_DRAWTHREAD_V1 \(core\|armed\|sample\)' "\$PROG" "\$LOG" 2>/dev/null | tail -6 | sed 's/^/    /'
++[ "\$(grep -h -c TSP_DRAWTHREAD_V1 "\$PROG" "\$LOG" 2>/dev/null | awk '{s+=\$1} END {print s+0}')" = 0 ] && echo "    (none: no launch since the patch, or the launcher never reached the launch line)"
+ if [ ! -f "\$LOG" ]; then echo "  !! \$LOG not found"; else
+     echo "  -- \$LOG (\$(ls -l "\$LOG" | awk '{print \$5, \$6, \$7, \$8}')) --"
+     echo "  model line:"; grep 'TSP_DRAWTHREAD_V1 model=' "\$LOG" | tail -1 | sed 's/^/    /'

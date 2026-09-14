@@ -1,0 +1,293 @@
+============================================================
+OPENMW 0.51 TSP — MANAGER V2.6
+COMPLETED BUILDS PASS + NO DB BACKUPS + REAL MOD APPLY STATE
+============================================================
+Replaces exactly five device files:
+  <root>/bin/openmw-manager-v2
+  <root>/launcher/openmw-manager-action-v2.sh
+  <root>/launcher/openmw-launcher-backend-v2.py
+  <PORTS>/OpenMW_Manager.sh
+  <PORTS>/OpenMW_Generate_Full_Navmesh_3Worker.sh
+
+Never touched: openmw.cfg, mods, saves, navmesh.db, swapfile,
+Morrowind.sh, the clean-path migrator.
+============================================================
+
+===== 1/7 EMIT SOURCES AND RUN HOST SELF-TESTS =====
+EMITTED 9fa641ce98e0ab7bb072cd88fc336dbd58369558c4a8e478e1c9f817b9bb58c0  /home/bob-simpson/Downloads/openmw-tsp-manager-v2.6/openmw_launcher_manager.cpp
+EMITTED df1dcb955700c7f448019edac4e3c911c3d2eea1afe22ec885e2aefa7180e49c  /home/bob-simpson/Downloads/openmw-tsp-manager-v2.6/openmw_manager_action.sh
+EMITTED 4beb5802e2ea2f3b214dfdc74522329e250eff89298d477548adbf1cd6eb95e1  /home/bob-simpson/Downloads/openmw-tsp-manager-v2.6/OpenMW_Manager.sh
+EMITTED fced7a3c3b7a001fe287e88402cb51277f03065e8f2b0b7d81125b9e050ed75f  /home/bob-simpson/Downloads/openmw-tsp-manager-v2.6/OpenMW_Generate_Full_Navmesh_3Worker.sh
+EMITTED 9378a83a871de98cb4d4eeeb75ab6118627db3270c58e44d104027bdc1973dcc  /home/bob-simpson/Downloads/openmw-tsp-manager-v2.6/openmw_launcher_backend.py
+PASS command: bash
+PASS command: sha256sum
+PASS command: awk
+PASS command: sed
+PASS command: grep
+PASS command: python3
+PASS shell and Python syntax
+PASS navmesh generator keeps the supplied behaviour plus the V2.5/V2.6 fixes
+PASS first-launch setup is navmesh + swap only
+PASS progress contract and menu markers
+PASS navmesh builder handoff structure
+MARKER=from-launch
+POISON=none
+LDP=none
+SDLRD=none
+PASS generator runs with the pristine Ports launch environment
+PASS handed-back outcome contract matches on both sides
+PASS bounded identity probe (2s) and headless generation
+PASS a build killed during the final VACUUM is reported as complete
+PASS a genuine generator failure is still a failure
+PASS Python backend behaviour selftest and mod-apply wiring
+OPENMW_MANAGER_V24_ACTION_SELFTEST_PASS
+PASS action backend behaviour selftest
+OPENMW51_MANAGER_V2_SELFTEST_PASS
+OPENMW_MANAGER_V24_PROGRESS_SELFTEST_PASS
+PASS warning-clean host C++ compile + child/progress selftest
+INFO SDL presentation is device-only; Ubuntu is never asked to provide SDL2
+PASS clean-layout path audit
+PASS command: docker
+PASS command: file
+PASS command: ssh
+PASS command: scp
+PASS SSH: root@192.168.1.12
+PASS Docker: openmw_builder
+
+===== 2/7 DEVICE READ-ONLY PREFLIGHT =====
+Installed three-worker generator (replaced with the supplied copy):
+-rwxrwxrwx    1 root     root         14136 Sep  4 22:40 /mnt/SDCARD/Roms/PORTS/OpenMW_Generate_Full_Navmesh_3Worker.sh
+835baf75ef3c2b849fb7b58a7198457bae42c5a0942802b1122e058a29837835  /mnt/SDCARD/Roms/PORTS/OpenMW_Generate_Full_Navmesh_3Worker.sh
+PASS game root: /mnt/SDCARD/data/ports/openmw
+PASS Ports directory: /mnt/SDCARD/Roms/PORTS
+Installed manager artifacts:
+18ae5fd5f1f6a535c1e3f4b80c5451bdca026a2c24e5ed0b6e11310ecbf1fa6b  /mnt/SDCARD/data/ports/openmw/bin/openmw-manager-v2
+df1dcb955700c7f448019edac4e3c911c3d2eea1afe22ec885e2aefa7180e49c  /mnt/SDCARD/data/ports/openmw/launcher/openmw-manager-action-v2.sh
+4beb5802e2ea2f3b214dfdc74522329e250eff89298d477548adbf1cd6eb95e1  /mnt/SDCARD/Roms/PORTS/OpenMW_Manager.sh
+Reusable first-launch assets:
+-rwxrwxrwx    1 root     root      891.3M Aug 28 17:04 /mnt/SDCARD/data/ports/openmw/defaults/base-navmesh.db
+-rwxrwxrwx    1 root     root      512.0M Aug 19 23:42 /mnt/SDCARD/data/ports/openmw/defaults/base-swapfile
+
+===== 3/7 BUILD ARM64 MANAGER (FULL OUTPUT) =====
+Compiler: /usr/bin/g++-13 (aarch64-linux-gnu)
+/tmp/openmw-manager-v2-v24: ELF 64-bit LSB shared object, ARM aarch64, version 1 (GNU/Linux), dynamically linked, interpreter /lib/ld-linux-aarch64.so.1, BuildID[sha1]=8430f1cddf68424ad50a870c2dd7a3b868d2efa2, for GNU/Linux 3.7.0, not stripped
+98f9d7cc078d52deb8a9919c35e4fb43ca6b9e4c25c6f0ab800490ea21621883  /tmp/openmw-manager-v2-v24
+PASS ARM64 manager binary: 98f9d7cc078d52deb8a9919c35e4fb43ca6b9e4c25c6f0ab800490ea21621883
+PASS action backend:       df1dcb955700c7f448019edac4e3c911c3d2eea1afe22ec885e2aefa7180e49c
+PASS Ports wrapper:        4beb5802e2ea2f3b214dfdc74522329e250eff89298d477548adbf1cd6eb95e1
+PASS navmesh generator:    fced7a3c3b7a001fe287e88402cb51277f03065e8f2b0b7d81125b9e050ed75f
+PASS python backend:       9378a83a871de98cb4d4eeeb75ab6118627db3270c58e44d104027bdc1973dcc
+
+===== 4/7 ALREADY-INSTALLED CHECK =====
+PASS this build differs from what is installed; proceeding
+
+===== 5/7 BACK UP THE THREE REPLACED FILES =====
+PASS verified backup: /mnt/SDCARD/data/ports/openmw/launcher/install-backups/manager-v26-before-20260904-231724
+18ae5fd5f1f6a535c1e3f4b80c5451bdca026a2c24e5ed0b6e11310ecbf1fa6b  /mnt/SDCARD/data/ports/openmw/launcher/install-backups/manager-v26-before-20260904-231724/manager-bin
+df1dcb955700c7f448019edac4e3c911c3d2eea1afe22ec885e2aefa7180e49c  /mnt/SDCARD/data/ports/openmw/launcher/install-backups/manager-v26-before-20260904-231724/manager-action
+4beb5802e2ea2f3b214dfdc74522329e250eff89298d477548adbf1cd6eb95e1  /mnt/SDCARD/data/ports/openmw/launcher/install-backups/manager-v26-before-20260904-231724/manager-wrapper
+835baf75ef3c2b849fb7b58a7198457bae42c5a0942802b1122e058a29837835  /mnt/SDCARD/data/ports/openmw/launcher/install-backups/manager-v26-before-20260904-231724/navmesh-generator
+51177cdaa7d021d1872bd05d7393185108a65eac8611f491536e38c509e6ff73  /mnt/SDCARD/data/ports/openmw/launcher/install-backups/manager-v26-before-20260904-231724/manager-python
+
+===== 6/7 STAGE, INSTALL TRANSACTIONALLY AND SELF-TEST ON DEVICE =====
+PASS Manager V2.6 installed and self-tested on device
+-rwxrwxrwx    1 root     root         17145 Sep  4 23:18 /mnt/SDCARD/Roms/PORTS/OpenMW_Generate_Full_Navmesh_3Worker.sh
+-rwxrwxrwx    1 root     root         10101 Sep  4 23:18 /mnt/SDCARD/Roms/PORTS/OpenMW_Manager.sh
+-rwxrwxrwx    1 root     root       1875688 Sep  4 23:18 /mnt/SDCARD/data/ports/openmw/bin/openmw-manager-v2
+-rwxrwxrwx    1 root     root         49394 Sep  4 23:18 /mnt/SDCARD/data/ports/openmw/launcher/openmw-launcher-backend-v2.py
+-rwxrwxrwx    1 root     root         22466 Sep  4 23:18 /mnt/SDCARD/data/ports/openmw/launcher/openmw-manager-action-v2.sh
+
+===== 7/7 DEVICE STATE AND LOG PULL =====
+--- current manager status.conf ---
+game=1
+udisk=1
+udisk_fs=ext4
+udisk_free=3167494144
+navmesh=1
+navmesh_size=934629376
+navmesh_target=/mnt/UDISK/openmw-nav/navmesh.db
+navmesh_profile=STALE
+profile_hash=94f57583cac15f5a2de202362588b9695ab9b4c55f894de706424fb741e4253a
+mod_navmesh=MODDED
+default_navmesh_ready=1
+default_navmesh=/mnt/SDCARD/data/ports/openmw/defaults/base-navmesh.db
+default_swap_ready=1
+default_swap=/mnt/SDCARD/data/ports/openmw/defaults/base-swapfile
+swap_file=1
+swap_active=1
+swap_size=536870912
+swap_target=/mnt/UDISK/openmw-swapfile
+mods_total=23
+mods_enabled=22
+plugin_status=VALID
+default_mods_ready=0
+default_mods=NOT CHECKED
+config=/mnt/SDCARD/data/ports/openmw/openmw.cfg
+generator=1
+generator_path=/mnt/SDCARD/Roms/PORTS/OpenMW_Generate_Full_Navmesh_3Worker.sh
+
+--- last result ---
+ERROR navmesh generator exited 137; existing database kept. See navmesh-generation-full-3worker.log
+
+--- reusable first-launch assets ---
+-rwxrwxrwx    1 root     root      891.3M Aug 28 17:04 /mnt/SDCARD/data/ports/openmw/defaults/base-navmesh.db
+-rwxrwxrwx    1 root     root      512.0M Aug 19 23:42 /mnt/SDCARD/data/ports/openmw/defaults/base-swapfile
+
+--- UDISK ---
+Filesystem                Size      Used Available Use% Mounted on
+/dev/mmcblk0p6            4.9G      1.6G      2.9G  36% /mnt/UDISK
+-rwxrwxrwx    1 root     root      891.3M Sep  4 22:49 /mnt/UDISK/openmw-nav/navmesh.db
+-rw-------    1 root     root      512.0M Sep  4 21:02 /mnt/UDISK/openmw-swapfile
+Filename				Type		Size		Used		Priority
+/mnt/UDISK/openmw-swapfile              file		524284		89544		-2
+
+--- manager log tail (last 120 lines) ---
+LIBGL: Using GLES 2.0 backend
+LIBGL: Targeting OpenGL 2.1
+LIBGL: WARNING, No Limited or Full NPOT support in hardware, Forcing NPOT have no effect!
+LIBGL: Not trying to batch small subsequent glDrawXXXX
+LIBGL: try to use VBO
+LIBGL: Force texture for Attachment color0 on FBO
+LIBGL: Hack to trigger a SwapBuffers when a Full Framebuffer Blit on default FBO is done
+LIBGL: glX Will try to recycle EGL Surface
+LIBGL: Current folder is:/mnt/sdcard/mmcblk1p1/Roms/PORTS
+Manager display milestone: SDL window complete
+Manager display milestone: software renderer complete
+Manager display: SDL2=libSDL2-2.0.so.0 driver=KMSDRM logical=1280x720
+0x5595354760
+============================================================
+Manager V2.4 action: startup
+Started: Fri Sep  4 22:42:19 PDT 2026
+============================================================
+Swap activated: /mnt/UDISK/openmw-swapfile
+Status refreshed: 22 mods, navmesh STALE
+============================================================
+Manager V2.4 action: build-navmesh
+Started: Fri Sep  4 22:42:40 PDT 2026
+============================================================
+Starting navmesh generation: /mnt/SDCARD/Roms/PORTS/OpenMW_Generate_Full_Navmesh_3Worker.sh
+============================================================
+OpenMW 0.51 FULL Navmesh Generator
+Current-runtime isolated navmeshtool
+============================================================
+Started:        Fri Sep  4 22:42:40 PDT 2026
+Tool runtime:   /mnt/SDCARD/data/ports/openmw/navmesh-tool-runtime
+Database:       /mnt/UDISK/openmw-nav/navmesh.db
+Workers:        3
+Interiors:      true
+Remove unused:  true
+Kept backups:   1
+Progress window: 0
+============================================================
+
+===== 1/7 PREFLIGHT =====
+Headless mode: the bundled progress window is not used.
+PASS: isolated current-runtime navmeshtool is present.
+
+===== 2/7 VERIFY MATCHING DEFAULTS + FULL INITIALIZATION =====
+Identity probe output (first 40 lines, stopped after 1s):
+LIBGL: Error while gathering supported extension (eglInitialize: EGL_BAD_DISPLAY), default to none
+LIBGL: Initialising gl4es
+LIBGL: v1.1.7 built on Aug 24 2026 09:27:33
+LIBGL: Using GLES 2.0 backend
+LIBGL: loaded: libGLESv2.so
+LIBGL: loaded: libEGL.so
+LIBGL: loaded: libgbm.so
+LIBGL: loaded: libdrm.so
+LIBGL: warning, /root/gl4es-tsps/src/glx/hardext.c line 150 function GetHardwareExtensions: egl_eglGetPlatformDisplay is NULL
+LIBGL: Using GLES 2.0 backend
+LIBGL: Targeting OpenGL 2.1
+LIBGL: Not trying to batch small subsequent glDrawXXXX
+LIBGL: Trying to use VBO
+LIBGL: Force texture for Attachment color0 on FBO
+LIBGL: Hack to trigger a SwapBuffers when a Full Framebuffer Blit on default FBO is done
+LIBGL: glX Will try to recycle EGL Surface
+LIBGL: Current folder is:/mnt/sdcard/mmcblk1p1/data/ports/openmw/navmesh-tool-runtime
+LIBGL: Not using PSA (prgbin_n=0, notexarray=0)
+[22:42:41.286 *] Crash handler installed
+[22:42:41.291 *] Loading config file: /mnt/sdcard/mmcblk1p1/data/ports/openmw/navmesh-tool-runtime/openmw.cfg
+[22:42:41.302 *] Loading config file: /mnt/SDCARD/data/ports/openmw/config/openmw.cfg
+[22:42:41.303 *] Repeated config dir: /mnt/SDCARD/data/ports/openmw/config
+[22:42:41.305 *] Logs dir: /mnt/SDCARD/data/ports/openmw/config
+[22:42:41.305 *] User data dir: /mnt/UDISK/openmw-nav/.version-check.4605
+[22:42:41.305 *] Screenshots dir: /mnt/UDISK/openmw-nav/.version-check.4605/screenshots
+[22:42:41.308 I] Using default (English) font encoding.
+[22:42:41.318 I] OpenMW version 0.51.0
+[22:42:41.318 I] Revision: 0901ea884f
+[22:42:41.331 I] Adding BSA archive /mnt/SDCARD/data/ports/openmw/data/Data Files/Morrowind.bsa
+[22:42:41.374 I] Adding BSA archive /mnt/SDCARD/data/ports/openmw/data/Data Files/Tribunal.bsa
+[22:42:41.387 I] Adding BSA archive /mnt/SDCARD/data/ports/openmw/data/Data Files/Bloodmoon.bsa
+[22:42:41.396 I] Adding data directory /mnt/SDCARD/data/ports/openmw/resources/vfs
+[22:42:41.409 I] Ignoring duplicate data directory /mnt/SDCARD/data/ports/openmw/resources/vfs
+[22:42:41.409 I] Adding data directory /mnt/SDCARD/data/ports/openmw/resources/vfs-mw
+[22:42:41.413 I] Adding data directory /mnt/SDCARD/data/ports/openmw/data/Data Files
+[22:42:41.570 I] Adding data directory /mnt/SDCARD/data/ports/openmw/mods/TSPPerformance
+[22:42:41.572 I] Adding data directory /mnt/SDCARD/data/ports/openmw/mods/TSPAtlasGlobalV02
+[22:42:41.576 I] Adding data directory /mnt/SDCARD/data/ports/openmw/mods/TSPInteriorVisGrid
+[22:42:41.658 I] Adding data directory /mnt/SDCARD/data/ports/openmw/savegame/data
+[22:42:41.724 I] Loading settings file: /mnt/sdcard/mmcblk1p1/data/ports/openmw/navmesh-tool-runtime/defaults.bin
+PASS: current navmeshtool + private current defaults initialize together.
+
+===== 3/7 BACK UP CURRENT CANONICAL DATABASE =====
+Current DB:
+-rwxrwxrwx    1 root     root      891.3M Sep  4 21:34 /mnt/UDISK/openmw-nav/navmesh.db
+SHA256:
+  174c652553a2669f91c66fb46aa4bc749e506c2ce30f59b7c6eeaa00be1d450e
+
+Creating verified backup:
+  /mnt/UDISK/openmw-nav/backups/navmesh-before-full-20260904-224243.db
+PASS: DB backup SHA verified.
+
+===== 4/7 BUILD GENERATION COMMAND =====
+Command:
+  /mnt/SDCARD/data/ports/openmw/navmesh-tool-runtime/openmw-navmeshtool  --resources  /mnt/SDCARD/data/ports/openmw/resources  --config  /mnt/SDCARD/data/ports/openmw/config  --user-data  /mnt/UDISK/openmw-nav  --threads  3  --process-interior-cells  true  --remove-unused-tiles
+
+===== 5/7 GENERATE / UPDATE EXTERIORS + ALL INTERIORS =====
+Headless generation: progress is being reported through this log.
+
+============================================================
+FULL NAVMESH GENERATION STOPPED
+============================================================
+Exit code: 137
+Line:      413
+Command:   wait "$RUNNER_PID"
+Finished:  Fri Sep  4 22:49:52 PDT 2026
+
+Log:
+  /mnt/SDCARD/data/ports/openmw/navmesh-generation-full-3worker.log
+
+Database:
+  /mnt/UDISK/openmw-nav/navmesh.db
+============================================================
+ERROR navmesh generator exited 137; existing database kept. See navmesh-generation-full-3worker.log
+LIBGL: Shuting down
+Manager request: exit
+
+============================================================
+MANAGER V2.6 INSTALLED
+============================================================
+Binary SHA:    98f9d7cc078d52deb8a9919c35e4fb43ca6b9e4c25c6f0ab800490ea21621883
+Action SHA:    df1dcb955700c7f448019edac4e3c911c3d2eea1afe22ec885e2aefa7180e49c
+Wrapper SHA:   4beb5802e2ea2f3b214dfdc74522329e250eff89298d477548adbf1cd6eb95e1
+Generator SHA: fced7a3c3b7a001fe287e88402cb51277f03065e8f2b0b7d81125b9e050ed75f
+Backend SHA:   9378a83a871de98cb4d4eeeb75ab6118627db3270c58e44d104027bdc1973dcc
+
+On the device: Ports -> OpenMW_Manager -> SETUP STORAGE ->
+SETUP GAME FOR FIRST LAUNCH.
+Expected: STEP 1 OF 3 copying the navmesh with a moving byte-accurate
+bar, STEP 2 OF 3 swap, STEP 3 OF 3 profile + status, then a COMPLETE
+page you dismiss with A.
+
+NAVMESH BUILDER -> BUILD / UPDATE CURRENT MOD PROFILE now stays in the
+manager and shows the generator's real progress: its 1/7..7/7 steps, then
+PROCESSING CELLS x / 1559, then GENERATING NAVMESH TILES x / 139620,
+then a COMPLETE or FAILED page carrying the generator's exit code.
+
+The standalone OpenMW_Generate_Full_Navmesh_3Worker Ports entry still
+uses its own progress window; only the identity probe and the backup
+space guard changed there.
+
+Diagnostics with full log:   ./apply_openmw_tsp_manager_v26_completed_builds_and_mod_apply.sh collect
+Undo exactly this install:   ./apply_openmw_tsp_manager_v26_completed_builds_and_mod_apply.sh rollback
+Sources kept in:             /home/bob-simpson/Downloads/openmw-tsp-manager-v2.6
+============================================================
