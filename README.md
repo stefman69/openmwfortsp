@@ -1,7 +1,6 @@
 # TrimUI Smart Pro - OpenMW 0.51 port
 
-Exported from the `openmw_builder` container on 20260816-155353.
-
+When I saw that someone had made a portmaster port for Morrowind I was really excited to put it on my TSPS, but then I found out it likely would not work on the TSP or even if I did install Knulli OS to be able to run it that it would not run very well. Morrowind is my favorite game of all time though, so I thought there has to be a way to get this working. What I initially thought would be just a reworking of the SH launcher file for the game turned into a massive undertaking of retuning the source code for openmw and building a binary that actually ran well on this system. Currently this game is playable only on the TrimUI Smart Pro and TrimUI Smart Pro S running either stock OS or Crossmix, though it will likely work on other OS's when I have the time and money to buy new SD cards and patch for them (it may work already, but I can't garauntee that). Instructions for installing the game and a full list of all major changes to stock OpenMW 0.51 is listed below.
 ## Layout
 
 - `sources/`    source trees (no build dirs, no `.before-*` backups)
