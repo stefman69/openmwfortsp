@@ -1,0 +1,517 @@
+#include "loadingscreen.hpp"
+#include <osg/Group>
+#include <components/shader/shadermanager.hpp>
+#include <components/resource/scenemanager.hpp>
+
+#include <array>
+#include <cstdio>
+#include <cstdlib>
+#include <fstream>
+
+#include <osgViewer/Viewer>
+
+#include <osg/Texture2D>
+
+#include <MyGUI_Gui.h>
+#include <MyGUI_ScrollBar.h>
+#include <MyGUI_TextBox.h>
+#include <MyGUI_UString.h>
+
+#include <components/debug/debuglog.hpp>
+#include <components/misc/pathhelpers.hpp>
+#include <components/misc/rng.hpp>
+#include <components/myguiplatform/myguitexture.hpp>
+#include <components/resource/resourcesystem.hpp>
+#include <components/settings/values.hpp>
+#include <components/vfs/manager.hpp>
+#include <components/vfs/recursivedirectoryiterator.hpp>
+
+#include "../mwbase/environment.hpp"
+#include "../mwbase/inputmanager.hpp"
+#include "../mwbase/statemanager.hpp"
+#include "../mwbase/windowmanager.hpp"
+
+#include "backgroundimage.hpp"
+
+namespace MWGui
+{
+
+    LoadingScreen::LoadingScreen(Resource::ResourceSystem* resourceSystem, osgViewer::Viewer* viewer)
+        : WindowBase("openmw_loading_screen.layout")
+        , mResourceSystem(resourceSystem)
+        , mViewer(viewer)
+        , mTargetFrameRate(120.0)
+        , mLastWallpaperChangeTime(0.0)
+        , mLastRenderTime(0.0)
+        , mLoadingOnTime(0.0)
+        , mImportantLabel(false)
+        , mNestedLoadingCount(0)
+        , mProgress(0)
+        , mShowWallpaper(true)
+    {
+        getWidget(mLoadingText, "LoadingText");
+        mLoadingText->setFontHeight(Settings::gui().mTspLoadingFontSize);
+        Log(Debug::Info) << "TSP_LOADING_TEXT_FONT_051_V36 height=14";
+        getWidget(mProgressBar, "ProgressBar");
+        getWidget(mLoadingBox, "LoadingBox");
+        getWidget(mSceneImage, "Scene");
+        getWidget(mSplashImage, "Splash");
+
+        mProgressBar->setScrollViewPage(1);
+
+        findSplashScreens();
+    }
+
+    LoadingScreen::~LoadingScreen() {}
+
+    void LoadingScreen::findSplashScreens()
+    {
+        auto isSupportedExtension = [](const std::string_view& ext) {
+            static const std::array<std::string, 7> supportedExtensions{ { "tga", "dds", "ktx", "png", "bmp", "jpeg",
+                "jpg" } };
+            return !ext.empty()
+                && std::find(supportedExtensions.begin(), supportedExtensions.end(), ext) != supportedExtensions.end();
+        };
+
+        constexpr VFS::Path::NormalizedView splash("splash/");
+        for (const auto& name : mResourceSystem->getVFS()->getRecursiveDirectoryIterator(splash))
+        {
+            if (isSupportedExtension(Misc::getFileExtension(name)))
+                mSplashScreens.push_back(name);
+        }
+        if (mSplashScreens.empty())
+            Log(Debug::Warning) << "Warning: no splash screens found!";
+    }
+
+    void LoadingScreen::setLabel(const std::string& label, bool important)
+    {
+        mImportantLabel = important;
+
+        mLoadingText->setCaptionWithReplacing(label);
+        int padding = mLoadingBox->getWidth() - mLoadingText->getWidth();
+        MyGUI::IntSize size(mLoadingText->getTextSize().width + padding, mLoadingBox->getHeight());
+        size.width = std::max(300, size.width);
+        mLoadingBox->setSize(size);
+
+        if (MWBase::Environment::get().getWindowManager()->getMessagesCount() > 0)
+            mLoadingBox->setPosition(mMainWidget->getWidth() / 2 - mLoadingBox->getWidth() / 2,
+                mMainWidget->getHeight() / 2 - mLoadingBox->getHeight() / 2);
+        else
+            mLoadingBox->setPosition(mMainWidget->getWidth() / 2 - mLoadingBox->getWidth() / 2,
+                mMainWidget->getHeight() - mLoadingBox->getHeight() - 8);
+    }
+
+    void LoadingScreen::setVisible(bool visible)
+    {
+        // TSP_LOADING_VISIBLE_BYPASS_051_V36
+        if (std::getenv("OPENMW_TSP_LOADING_BYPASS") != nullptr)
+        {
+            if (visible)
+            {
+                std::ofstream markerFile(
+                    "/tmp/openmw-tsp-loading-active",
+                    std::ios::trunc);
+
+                markerFile << "1\n";
+
+                Log(Debug::Info)
+                    << "TSP_LOADING_VISIBLE_BYPASS_051_V36 active=1";
+            }
+            else
+            {
+                std::remove(
+                    "/tmp/openmw-tsp-loading-active");
+
+                Log(Debug::Info)
+                    << "TSP_LOADING_VISIBLE_BYPASS_051_V36 active=0";
+            }
+        }
+
+        WindowBase::setVisible(visible);
+        mSplashImage->setVisible(visible);
+        mSceneImage->setVisible(visible);
+    }
+
+    double LoadingScreen::getTargetFrameRate() const
+    {
+        double frameRateLimit = MWBase::Environment::get().getFrameRateLimit();
+        if (frameRateLimit > 0)
+            return std::min(frameRateLimit, mTargetFrameRate);
+        else
+            return mTargetFrameRate;
+    }
+
+    class CopyFramebufferToTextureCallback : public osg::Camera::DrawCallback
+    {
+    public:
+        CopyFramebufferToTextureCallback(osg::Texture2D* texture)
+            : mOneshot(true)
+            , mTexture(texture)
+        {
+        }
+
+        void operator()(osg::RenderInfo& renderInfo) const override
+        {
+            // TSP_LOADING_CAPTURE_PHYSICAL_051_V36
+            if (!mOneshot)
+                return;
+
+            osg::Camera* camera = renderInfo.getCurrentCamera();
+            const osg::Viewport* viewPort
+                = camera ? camera->getViewport() : nullptr;
+
+            int w
+                = viewPort
+                ? static_cast<int>(viewPort->width())
+                : 0;
+
+            int h
+                = viewPort
+                ? static_cast<int>(viewPort->height())
+                : 0;
+
+            if (camera != nullptr)
+            {
+                osg::GraphicsContext* graphicsContext
+                    = camera->getGraphicsContext();
+
+                const osg::GraphicsContext::Traits* traits
+                    = graphicsContext
+                    ? graphicsContext->getTraits()
+                    : nullptr;
+
+                if (traits != nullptr
+                    && traits->width > 0
+                    && traits->height > 0)
+                {
+                    w = traits->width;
+                    h = traits->height;
+                }
+            }
+
+            if (w > 0 && h > 0)
+            {
+                mTexture->copyTexImage2D(
+                    *renderInfo.getState(),
+                    0,
+                    0,
+                    w,
+                    h);
+            }
+
+            mOneshot = false;
+        }
+
+        void reset() { mOneshot = true; }
+
+    private:
+        mutable bool mOneshot;
+        osg::ref_ptr<osg::Texture2D> mTexture;
+    };
+
+    class DontComputeBoundCallback : public osg::Node::ComputeBoundingSphereCallback
+    {
+    public:
+        osg::BoundingSphere computeBound(const osg::Node&) const override { return osg::BoundingSphere(); }
+    };
+
+    void LoadingScreen::loadingOn()
+    {
+        // Early-out if already on
+        if (mNestedLoadingCount++ > 0 && mMainWidget->getVisible())
+            return;
+
+        mLoadingOnTime = mTimer.time_m();
+
+
+
+        // Assign dummy bounding sphere callback to avoid the bounding sphere of the entire scene being recomputed after
+        // each frame of loading We are already using node masks to avoid the scene from being updated/rendered, but
+        // node masks don't work for computeBound()
+        mViewer->getSceneData()->setComputeBoundingSphereCallback(new DontComputeBoundCallback);
+
+        if (const osgUtil::IncrementalCompileOperation* ico = mViewer->getIncrementalCompileOperation())
+        {
+            mOldIcoMin = ico->getMinimumTimeAvailableForGLCompileAndDeletePerFrame();
+            mOldIcoMax = ico->getMaximumNumOfObjectsToCompilePerFrame();
+        }
+
+        setVisible(true);
+
+        mShowWallpaper = MWBase::Environment::get().getStateManager()->getState() == MWBase::StateManager::State_NoGame;
+
+
+        if (mShowWallpaper)
+        {
+            changeWallpaper();
+        }
+
+        MWBase::Environment::get().getWindowManager()->pushGuiMode(mShowWallpaper ? GM_LoadingWallpaper : GM_Loading);
+    }
+
+    void LoadingScreen::loadingOff()
+    {
+        /* TSP_WARMDRAW_GATE: the shader warm-up group holds one throwaway draw
+           per new program, each costing Mali ~236ms. Keep the loading screen up
+           and keep drawing until they are all consumed, so that cost lands in
+           the load the player is already waiting through instead of as stutter
+           during play. Bounded so a stuck group can never hang the game. */
+        if (mResourceSystem)
+        {
+            /* TSP_VARIANT_PRECOMPILE_V1: build every permutation this install has
+               ever needed BEFORE the gate below drains the group, so one first
+               used mid-combat is already linked and warm-drawn. */
+            mResourceSystem->getSceneManager()->getShaderManager().tspPrecompileVariants();
+            osg::Group* warmup
+                = mResourceSystem->getSceneManager()->getShaderManager().getWarmupGroup();
+            int guard = 0;
+            /* TSP_VARIANT_PRECOMPILE_V1: the prune callback releases one warm
+               node at a time and retires it at age 2, so ~3 frames per program.
+               240 was sized for ~12 programs; the replay can queue many more. */
+            /* TSP_WARMDRAIN_V3: the previous version budgeted in ITERATIONS,
+               which was the bug. needToDrawLoadingScreen() (line ~384) refuses
+               any draw within 1000/targetFrameRate ms of the last one, and this
+               loop never sleeps - so its 31 iterations all fitted inside one
+               throttle window (31 iterations in 5 ms) and not a single frame was
+               ever rendered. It left "remaining=14" warm nodes to hitch during
+               play. Budget in wall clock instead, and let the spin carry us to
+               the next window. Bail after 2 s of no progress so that if the
+               group still cannot drain this costs seconds, not the full
+               deadline. */
+            mResourceSystem->getSceneManager()->getShaderManager().tspSetWarmupDrainFast(true);
+            const double tspDrainStart = mTimer.time_m();
+            const double tspDrainDeadline = tspDrainStart + 15000.0;
+            double tspLastProgress = tspDrainStart;
+            unsigned int tspLast = warmup ? warmup->getNumChildren() : 0u;
+            /* TSP_WARMDRAIN_V4: V3 still rendered nothing - 3,240,063 spins in
+               2001 ms is 0.6 us each, so draw() returned at its
+               needToDrawLoadingScreen() guard every single time and the 2 s
+               no-progress bail was the only thing that ever happened. Instead of
+               guessing at that throttle again, do what draw() does AFTER it
+               decides to render and skip the decision: the four calls below are
+               its body, in the deliberate out-of-order sequence its own comment
+               describes. One iteration is now exactly one real frame, so the
+               update traversal runs TspWarmupPrune and the render traversal
+               issues the warm draws. */
+            int tspFrames = 0;
+            while (warmup && warmup->getNumChildren() > 0 && tspFrames < 240
+                && mTimer.time_m() < tspDrainDeadline)
+            {
+                MWBase::Environment::get().getInputManager()->update(0, true, true);
+                mViewer->eventTraversal();
+                mViewer->updateTraversal();
+                mViewer->renderingTraversals();
+                mViewer->advance(mViewer->getFrameStamp()->getSimulationTime());
+                mLastRenderTime = mTimer.time_m();
+                ++tspFrames;
+                ++guard;
+                const unsigned int tspNow = warmup->getNumChildren();
+                if (tspNow != tspLast)
+                {
+                    tspLast = tspNow;
+                    tspLastProgress = mTimer.time_m();
+                }
+                else if (mTimer.time_m() - tspLastProgress > 4000.0)
+                    break;
+            }
+            /* TSP_WARMDRAIN_V5: 240 REAL frames inside this gate moved the
+               child count not at all (remaining=14, three loads running). The
+               traversals ran; the prune did not. Both are only true if the
+               warm-up group is not in the traversal - and loadingOn() says why
+               at line 228: "We are already using node masks to avoid the scene
+               from being updated/rendered". mWarmupGroup is a child of
+               sceneRoot, so it is switched off for the whole life of the
+               loading screen. This gate has never been able to work, in any of
+               its versions. So do NOT clear fast mode here: leave it armed and
+               let the backlog drain in the first gameplay frames, when the
+               scene is live again - ~4 frames instead of 14 hitches scattered
+               through combat. TspWarmupPrune disarms it once the group empties. */
+            if (guard)
+                Log(Debug::Info) << "TSP_WARMDRAW_GATE drained in " << guard << " frames remaining="
+                                 << (warmup ? warmup->getNumChildren() : 0u)
+                                 << " ms=" << (mTimer.time_m() - tspDrainStart);
+        }
+
+        if (--mNestedLoadingCount > 0)
+            return;
+
+if (mLastRenderTime < mLoadingOnTime)
+        {
+            // the loading was so fast that we didn't show loading screen at all
+            // we may still want to show the label if the caller requested it
+            if (mImportantLabel)
+            {
+                MWBase::Environment::get().getWindowManager()->messageBox(mLoadingText->getCaption());
+                mImportantLabel = false;
+            }
+        }
+        else
+            mImportantLabel = false; // label was already shown on loading screen
+
+        mViewer->getSceneData()->setComputeBoundingSphereCallback(nullptr);
+        mViewer->getSceneData()->dirtyBound();
+
+        setVisible(false);
+
+        if (osgUtil::IncrementalCompileOperation* ico = mViewer->getIncrementalCompileOperation())
+        {
+            ico->setMinimumTimeAvailableForGLCompileAndDeletePerFrame(mOldIcoMin);
+            ico->setMaximumNumOfObjectsToCompilePerFrame(mOldIcoMax);
+        }
+
+        MWBase::Environment::get().getWindowManager()->removeGuiMode(GM_Loading);
+        MWBase::Environment::get().getWindowManager()->removeGuiMode(GM_LoadingWallpaper);
+    }
+
+    void LoadingScreen::changeWallpaper()
+    {
+        if (!mSplashScreens.empty())
+        {
+            std::string const& randomSplash = mSplashScreens.at(Misc::Rng::rollDice(mSplashScreens.size()));
+
+            // TODO: add option (filename pattern?) to use image aspect ratio instead of 4:3
+            // we can't do this by default, because the Morrowind splash screens are 1024x1024, but should be displayed
+            // as 4:3
+            mSplashImage->setVisible(true);
+            mSplashImage->setBackgroundImage(randomSplash, true, false);
+        }
+        mSceneImage->setBackgroundImage({});
+        mSceneImage->setVisible(false);
+    }
+
+    void LoadingScreen::setProgressRange(size_t range)
+    {
+        mProgressBar->setScrollRange(range + 1);
+        mProgressBar->setScrollPosition(0);
+        mProgressBar->setTrackSize(0);
+        mProgress = 0;
+    }
+
+    void LoadingScreen::setProgress(size_t value)
+    {
+        // skip expensive update if there isn't enough visible progress
+        if (mProgressBar->getWidth() <= 0
+            || value - mProgress < mProgressBar->getScrollRange() / mProgressBar->getWidth())
+            return;
+        value = std::min(value, mProgressBar->getScrollRange() - 1);
+        mProgress = value;
+        mProgressBar->setScrollPosition(0);
+        mProgressBar->setTrackSize(
+            static_cast<int>(value / (float)(mProgressBar->getScrollRange()) * mProgressBar->getLineSize()));
+        draw();
+    }
+
+    void LoadingScreen::increaseProgress(size_t increase)
+    {
+        mProgressBar->setScrollPosition(0);
+        size_t value = mProgress + increase;
+        value = std::min(value, mProgressBar->getScrollRange() - 1);
+        mProgress = value;
+        mProgressBar->setTrackSize(
+            static_cast<int>(value / (float)(mProgressBar->getScrollRange()) * mProgressBar->getLineSize()));
+        draw();
+    }
+
+    bool LoadingScreen::needToDrawLoadingScreen()
+    {
+        if (mTimer.time_m() <= mLastRenderTime + (1.0 / getTargetFrameRate()) * 1000.0)
+            return false;
+
+        // the minimal delay before a loading screen shows
+        constexpr float initialDelay = 0.05f;
+
+        bool alreadyShown = (mLastRenderTime > mLoadingOnTime);
+        double diff = (mTimer.time_m() - mLoadingOnTime);
+
+        if (!alreadyShown)
+        {
+            // bump the delay by the current progress - i.e. if during the initial delay the loading
+            // has almost finished, no point showing the loading screen now
+            diff -= mProgress / static_cast<float>(mProgressBar->getScrollRange()) * 100.f;
+        }
+
+        if (!mShowWallpaper && diff < initialDelay * 1000)
+            return false;
+        return true;
+    }
+
+    void LoadingScreen::setupCopyFramebufferToTextureCallback()
+    {
+        // Copy the current framebuffer onto a texture and display that texture as the background image
+        // Note, we could also set the camera to disable clearing and have the background image transparent,
+        // but then we get shaking effects on buffer swaps.
+
+        if (!mTexture)
+        {
+            mTexture = new osg::Texture2D;
+            mTexture->setWrap(osg::Texture::WRAP_S, osg::Texture::CLAMP_TO_EDGE);
+            mTexture->setWrap(osg::Texture::WRAP_T, osg::Texture::CLAMP_TO_EDGE);
+            mTexture->setInternalFormat(GL_RGB);
+            mTexture->setResizeNonPowerOfTwoHint(false);
+        }
+
+        if (!mGuiTexture.get())
+        {
+            mGuiTexture = std::make_unique<MyGUIPlatform::OSGTexture>(mTexture);
+        }
+
+        if (!mCopyFramebufferToTextureCallback)
+        {
+            mCopyFramebufferToTextureCallback = new CopyFramebufferToTextureCallback(mTexture);
+        }
+
+        mViewer->getCamera()->removeInitialDrawCallback(mCopyFramebufferToTextureCallback);
+        mViewer->getCamera()->addInitialDrawCallback(mCopyFramebufferToTextureCallback);
+        mCopyFramebufferToTextureCallback->reset();
+
+        mSplashImage->setBackgroundImage({});
+        mSplashImage->setVisible(false);
+
+        mSceneImage->setRenderItemTexture(mGuiTexture.get());
+        // The widget is Y-down, the RTT image is Y-up, so this UV is inverted
+        mSceneImage->getSubWidgetMain()->_setUVSet(MyGUI::FloatRect(0.f, 1.f, 1.f, 0.f));
+        mSceneImage->setVisible(true);
+    }
+
+    void LoadingScreen::draw()
+    {
+        if (!needToDrawLoadingScreen())
+            return;
+
+        if (mShowWallpaper && mTimer.time_m() > mLastWallpaperChangeTime + 5000 * 1)
+        {
+            mLastWallpaperChangeTime = mTimer.time_m();
+            changeWallpaper();
+        }
+
+        if (!mShowWallpaper && mLastRenderTime < mLoadingOnTime)
+        {
+            setupCopyFramebufferToTextureCallback();
+        }
+
+        MWBase::Environment::get().getInputManager()->update(0, true, true);
+
+        osg::Stats* const stats = mViewer->getViewerStats();
+        const unsigned frameNumber = mViewer->getFrameStamp()->getFrameNumber();
+
+        stats->setAttribute(frameNumber, "Loading", 1);
+
+        mResourceSystem->reportStats(frameNumber, stats);
+        if (osgUtil::IncrementalCompileOperation* ico = mViewer->getIncrementalCompileOperation())
+        {
+            ico->setMinimumTimeAvailableForGLCompileAndDeletePerFrame(1.f / getTargetFrameRate());
+            ico->setMaximumNumOfObjectsToCompilePerFrame(1000);
+        }
+
+        // at the time this function is called we are in the middle of a frame,
+        // so out of order calls are necessary to get a correct frameNumber for the next frame.
+        // refer to the advance() and frame() order in Engine::go()
+        mViewer->eventTraversal();
+        mViewer->updateTraversal();
+        mViewer->renderingTraversals();
+        mViewer->advance(mViewer->getFrameStamp()->getSimulationTime());
+
+        mLastRenderTime = mTimer.time_m();
+    }
+
+}

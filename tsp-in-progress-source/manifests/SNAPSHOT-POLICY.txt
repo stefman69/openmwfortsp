@@ -1,0 +1,24 @@
+TSP SOURCE-ONLY WORKING SNAPSHOT
+================================
+captured=20260922-121509
+
+repository=stefman69/openmwfortsp
+
+clean_tsps_branch=source-backup
+working_tsp_branch=tsp-in-progress
+
+openmw_source=/root/openmw-0.51-tsp-src
+tsps_gl4es_source=/root/gl4es-tsps
+tsp_gl4es_source=/root/gl4es-tsp-pvr-texture-v2
+
+NO device/card/console access was performed.
+NO built/export binaries were intentionally captured.
+NO new local gl4es source fork was created.
+
+Persistent local source policy:
+  TSPS: /root/gl4es-tsps
+  TSP : /root/gl4es-tsp-pvr-texture-v2
+
+Persistent GitHub policy:
+  source-backup is historical clean TSPS reference and is never pushed by this script.
+  tsp-in-progress is the ongoing TSP development backup branch.

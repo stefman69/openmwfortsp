@@ -1,0 +1,88 @@
+# repo: gl4es-tsps
+# HEAD:   81547d986798e876de8b434193920b606a72363f
+# branch: heads/master
+# --- status ---
+ M src/gl/buffers.c
+ M src/gl/fpe.c
+ M src/gl/fpe_shader.c
+ M src/gl/framebuffers.c
+ M src/gl/list.c
+ M src/gl/listdraw.c
+ M src/gl/matrix.c
+ M src/gl/shader.c
+ M src/gl/shaderconv.c
+ M src/gl/texture_params.c
+ M src/gl/texture_read.c
+ M src/glx/glx.c
+ M src/glx/hardext.c
+ M src/glx/hardext.h
+?? .tsp-batch-trace-archive-20260812-204732/
+?? src/gl/buffers.c.before-vbodump
+?? src/gl/drawing.c.before-dtprobe
+?? src/gl/fpe.c.before-fpedrawtrace-20260813-013643
+?? src/gl/fpe.c.before-texmatdump
+?? src/gl/fpe_shader.c.before-shaderdump
+?? src/gl/framebuffers.c.before-bindsync
+?? src/gl/framebuffers.c.before-ctdump
+?? src/gl/framebuffers.c.before-dedup-20260816-224121
+?? src/gl/framebuffers.c.before-depth24
+?? src/gl/framebuffers.c.before-dtprobe
+?? src/gl/framebuffers.c.before-fblog
+?? src/gl/framebuffers.c.before-fbnorm
+?? src/gl/framebuffers.c.before-fbnormfwd
+?? src/gl/framebuffers.c.before-fbodiag
+?? src/gl/framebuffers.c.before-forcertt
+?? src/gl/framebuffers.c.before-fwddecl
+?? src/gl/framebuffers.c.before-restore-20260816-223814
+?? src/gl/framebuffers.c.before-rttdepth
+?? src/gl/framebuffers.c.before-terrainfix
+?? src/gl/framebuffers.c.before-tsp-framebuffer-scaler-20260810-201234
+?? src/gl/framebuffers.c.before-v31-native-scaler-20260811-002224
+?? src/gl/gl4es.c.before-dtprobe
+?? src/gl/gl4es.c.before-flushtrace-20260812-234556
+?? src/gl/list.c.before-alloctrace-20260812-224908
+?? src/gl/list.c.before-batchsafe-20260812-221828
+?? src/gl/list.c.before-batchtrace-20260812-222738
+?? src/gl/list.c.before-batchtrace-20260812-223048
+?? src/gl/list.c.before-callertrace-20260812-234223
+?? src/gl/list.c.before-earlytrace-20260812-223857
+?? src/gl/list.c.before-extend-else-trace-20260812-225222
+?? src/gl/list.c.before-trace-append-20260812-224436
+?? src/gl/listdraw.c.before-clientbuf-fix-20260813-024437
+?? src/gl/listdraw.c.before-clientbuf-prod-20260813-034734
+?? src/gl/listdraw.c.before-drawtrace-20260812-235259
+?? src/gl/listdraw.c.before-drawtrace-v2-20260812-235518
+?? src/gl/listdraw.c.before-inline-draw-fix-20260813-014923
+?? src/gl/listdraw.c.before-inline-submit-repair-20260813-022057
+?? src/gl/listdraw.c.before-npotadj
+?? src/gl/listdraw.c.before-unit0
+?? src/gl/matrix.c.before-matdump
+?? src/gl/matrix.c.before-matmode
+?? src/gl/raster.c.before-dtprobe
+?? src/gl/shader.c.before-convdump
+?? src/gl/shader.c.before-highpvarying
+?? src/gl/shader.c.before-invariant
+?? src/gl/shader.c.before-lazycall
+?? src/gl/shader.c.before-probe2
+?? src/gl/shader.c.before-rmglstring
+?? src/gl/shaderconv.c.before-forcederiv
+?? src/gl/texture.c.before-ctdump
+?? src/gl/texture.c.before-dtprobe
+?? src/gl/texture.c.before-v34-texturedebug-20260811-044510
+?? src/gl/texture_params.c.before-helpertex
+?? src/gl/texture_params.c.before-texenv
+?? src/gl/texture_params.c.before-texenvfwd
+?? src/gl/texture_read.c.before-ct2
+?? src/gl/texture_read.c.before-ctdump
+?? src/glx/glx.c.before-depthoverride
+?? src/glx/glx.c.before-nox11-scaler-20260810-200900
+?? src/glx/glx.c.before-pinned-fbo-20260810-200216
+?? src/glx/glx.c.before-runtime-log-fix-20260810-200423
+?? src/glx/hardext.c.before-extdump
+?? src/glx/hardext.c.before-extflags
+?? src/glx/hardext.c.before-lazyhardext
+?? src/glx/hardext.c.before-precprobe
+?? src/glx/hardext.c.before-probefix
+?? src/glx/hardext.c.before-probemove
+?? src/glx/hardext.c.before-reallimits
+?? src/glx/hardext.h.before-lazyhardext

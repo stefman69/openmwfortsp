@@ -1,0 +1,98 @@
+name: Build
+
+on:
+- push
+- pull_request
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    strategy:
+      fail-fast: true
+
+      matrix:
+        conf:
+          - Release
+
+    runs-on: windows-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Enable vcpkg downloads cache
+      uses: actions/cache@v4
+      with:
+        path: 'C:/vcpkg/downloads'
+        key: vcpkg_downloads_cache_v1
+
+    - name: Enable vcpkg installed cache
+      uses: actions/cache@v4
+      with:
+        path: 'C:/vcpkg/installed'
+        key: vcpkg_installed_cache_v1
+
+    - name: Install dependencies
+      run: >
+        vcpkg install --triplet x64-windows
+        collada-dom
+        freetype
+        libiconv
+        libjpeg-turbo
+        libpng
+        libxml2
+        opengl-registry
+        tiff
+        zlib
+
+    - uses: ilammy/msvc-dev-cmd@v1
+
+    - name: Configure
+      run: >
+        cmake
+        -G Ninja
+        -B ${{ github.workspace }}/build
+        -D CMAKE_BUILD_TYPE=${{ matrix.conf }}
+        -D CMAKE_TOOLCHAIN_FILE='C:/vcpkg/scripts/buildsystems/vcpkg.cmake'
+        -D CMAKE_INSTALL_PREFIX=${{ github.workspace }}/build/install
+        -D CMAKE_CXX_STANDARD=11
+        -D CMAKE_C_FLAGS='/DWIN32 /D_WINDOWS /Zi'
+        -D CMAKE_CXX_FLAGS='/DWIN32 /D_WINDOWS /GR /EHsc /Zi'
+        -D OPENGL_PROFILE=GL2
+        -D OSG_MSVC_VERSIONED_DLL=OFF
+        -D OSG_DETERMINE_WIN_VERSION=OFF
+        -D OSG_FIND_3RD_PARTY_DEPS=OFF
+        -D BUILD_OSG_PLUGINS_BY_DEFAULT=OFF
+        -D BUILD_OSG_PLUGIN_OSG=ON
+        -D BUILD_OSG_PLUGIN_DDS=ON
+        -D BUILD_OSG_PLUGIN_TGA=ON
+        -D BUILD_OSG_PLUGIN_BMP=ON
+        -D BUILD_OSG_PLUGIN_JPEG=ON
+        -D BUILD_OSG_PLUGIN_PNG=ON
+        -D BUILD_OSG_PLUGIN_FREETYPE=ON
+        -D BUILD_OSG_PLUGIN_DAE=ON
+        -D BUILD_OSG_PLUGIN_KTX=ON
+        -D BUILD_OSG_APPLICATIONS=OFF
+        -D BUILD_OSG_DEPRECATED_SERIALIZERS=OFF
+        -D DYNAMIC_OPENTHREADS=ON
+        -D DYNAMIC_OPENSCENEGRAPH=ON
+
+    - name: Build
+      run: cmake --build ${{ github.workspace }}/build --parallel
+
+    - name: Install
+      run: cmake --install ${{ github.workspace }}/build
+
+    - name: Store osg build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: osg-${{ github.sha }}
+        path: ${{ github.workspace }}/build/install
+
+    - name: Store osg dependencies build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: osg-dependencies-${{ github.sha }}
+        path: 'C:/vcpkg/installed'

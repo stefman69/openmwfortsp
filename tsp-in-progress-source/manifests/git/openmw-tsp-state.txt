@@ -1,0 +1,32 @@
+label=openmw-tsp
+container=openmw_builder
+source=/root/openmw-0.51-tsp-src
+captured=2026-09-22T12:15:15-07:00
+
+===== HEAD =====
+ffcb2e36e5f201716d133a6c776443b66f2c83c1
+
+===== BRANCH =====
+tsp-clean-pre-interior
+
+===== STATUS INCLUDING UNTRACKED =====
+ M apps/openmw/mwinput/controllermanager.cpp
+ M apps/openmw/mwinput/inputmanagerimp.cpp
+ M apps/openmw/mwstate/statemanagerimp.cpp
+?? apps/openmw/mwinput/controllermanager.cpp.v65bak
+?? apps/openmw/mwinput/inputmanagerimp.cpp.v64bak
+
+===== RECENT COMMITS =====
+ffcb2e36 TSP_FOG_NO_PBO_V1: PowerVR fog upload A/B
+e37c113f TSP_BLANKTEX_V1: a degenerate texture name returns a blank 1x1, not magenta
+7264f341 TSP_EMPTY_CLOUDTEX_V1 + TSP_WARNCACHE_V1: guard the empty cloud texture name; stop poisoning the image cache
+ef52bcda revert TSP sound warm (V1+V2): cut tspWarmCellSounds, restore the five small files; SOUNDPHASE/MEMGATE/LOADTRACE untouched
+ef68924b TSP_SNDWARM_V2: budgeted ordered sound warm; unreachable cache warning fixed
+b11aba6f rollback: restore actors.cpp to pre-session pristine
+816265de TSP_ACTOR_RENDER_RANGE_V1 + anim-LOD default off
+ddb35124 TSP_ACTOR_ANIM_LOD_V1: distance-staggered actor skinning LOD in Actors::update
+0901ea88 TSP source snapshot 20260824-030710
+9d6e2eba openmw 0.51 TSP: V38-V43 input chain, SafeNav gate, occlusion+maskedoc wiring, autosave, scene V2
+4ab03a29 strip compiled binaries
+93c8be57 strip compiled binaries
+39bf4ac4 Add test file with sample content

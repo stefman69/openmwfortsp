@@ -1,0 +1,238 @@
+total 1756552
+drwx------  1 root root     16384 Aug 16 22:47 .
+drwxr-xr-x  1 root root      4096 Aug 16 22:47 ..
+-rw-------  1 root root     53656 Aug  8 10:30 .bash_history
+-rw-r--r--  1 root root      3106 Dec  5  2019 .bashrc
+drwxr-xr-x  3 root root      4096 Aug  3 10:16 .cache
+-rw-r--r--  1 root root       161 Dec  5  2019 .profile
+drwxr-xr-x  3 root root      4096 Aug  4 12:21 Downloads
+-rw-r--r--  1 root root     41044 Aug 16 09:38 TSP_FINAL.diff
+-rwx--x--x  1 1000 1000     44247 Aug 10 07:51 TSP_V15_THEN_V17_ADAPTIVE_FPS_R2_20260810.sh
+-rwx--x--x  1 1000 1000     56151 Aug 10 08:45 TSP_V18_DEFERRED_DEPTH_NATIVE_RES_20260810.sh
+-rwx--x--x  1 1000 1000     34974 Aug 10 09:23 TSP_V19_CLEAN_PERFORMANCE_RESOLUTIONS_20260810.sh
+-rwx--x--x  1 1000 1000     31986 Aug 10 09:49 TSP_V20_INTERNAL_RENDER_SCALE_20260810.sh
+-rwx--x--x  1 1000 1000     33788 Aug 10 09:55 TSP_V20_INTERNAL_RENDER_SCALE_R2_20260810.sh
+-rwxrwxr-x  1 1000 1000     25287 Aug  6 18:51 apply_and_rebuild_openmw_048_cursor_graphics_compat_v10.sh
+-rwxrwxr-x  1 1000 1000     25286 Aug  6 18:53 apply_and_rebuild_openmw_048_cursor_graphics_compat_v11.sh
+-rwxrwxr-x  1 1000 1000      9035 Aug  6 21:06 apply_and_rebuild_openmw_048_cursor_graphics_compat_v12.sh
+-rwxrwxr-x  1 1000 1000     22299 Aug  6 18:45 apply_and_rebuild_openmw_048_cursor_graphics_compat_v8.sh
+-rwxrwxr-x  1 1000 1000     22393 Aug  6 18:48 apply_and_rebuild_openmw_048_cursor_graphics_compat_v9.sh
+-rwxrwxr-x  1 1000 1000     11813 Aug  5 22:47 apply_and_rebuild_openmw_048_l3_cursor_v3.sh
+-rwxrwxr-x  1 1000 1000     11756 Aug  5 22:49 apply_and_rebuild_openmw_048_l3_cursor_v3_fixed.sh
+-rwxrwx--x  1 1000 1000     13090 Aug  6 09:45 apply_and_rebuild_openmw_048_menu_select_cursor_v4.sh
+-rwxrwxr-x  1 1000 1000     13061 Aug  6 09:53 apply_and_rebuild_openmw_048_menu_select_cursor_v5.sh
+-rwxrwxr-x  1 1000 1000     13128 Aug  6 09:54 apply_and_rebuild_openmw_048_menu_select_cursor_v6.sh
+-rwxrwxr-x  1 1000 1000     10201 Aug  5 18:50 apply_and_rebuild_openmw_048_mygui_cursor_v2.sh
+-rwxrwx--x  1 1000 1000     22480 Aug  7 19:26 apply_and_rebuild_openmw_051_tsp_direct_framebuffer_clean.sh
+-rwxrwx--x  1 1000 1000     21832 Aug  7 19:24 apply_and_rebuild_openmw_051_tsp_direct_framebuffer_v1.sh
+-rwxrwx--x  1 1000 1000     24250 Aug  7 19:51 apply_and_rebuild_openmw_051_tsp_gl4es_compat.sh
+-rwxrwx--x  1 1000 1000     29514 Aug  7 19:57 apply_and_rebuild_openmw_051_tsp_gl4es_white_screen_linkfix.sh
+-rwxrwx--x  1 1000 1000     56546 Aug  7 11:25 apply_and_rebuild_openmw_051_tsp_input_graphics_hybrid_v1.sh
+-rwxrwx--x  1 1000 1000     59186 Aug  7 11:32 apply_and_rebuild_openmw_051_tsp_input_graphics_hybrid_v2.sh
+-rwxrwx--x  1 1000 1000     59426 Aug  7 11:42 apply_and_rebuild_openmw_051_tsp_input_graphics_hybrid_v3.sh
+-rwxrwx--x  1 1000 1000     58533 Aug  7 11:57 apply_and_rebuild_openmw_051_tsp_input_graphics_hybrid_v4.sh
+-rwxrwx--x  1 1000 1000     58099 Aug  7 12:24 apply_and_rebuild_openmw_051_tsp_input_graphics_hybrid_v5.sh
+-rwxrwx--x  1 1000 1000     61613 Aug  7 12:50 apply_and_rebuild_openmw_051_tsp_input_graphics_hybrid_v6.sh
+-rwxrwx--x  1 1000 1000     63963 Aug  7 12:55 apply_and_rebuild_openmw_051_tsp_input_graphics_hybrid_v6_audited.sh
+-rwxrwx--x  1 1000 1000     36516 Aug  7 11:16 apply_and_rebuild_openmw_051_tsp_input_hybrid_v1.sh
+-rwxrwxr-x  1 1000 1000      9931 Aug  5 18:24 apply_openmw_048_tsp_cursor.sh
+-rwxrwx--x  1 1000 1000      9446 Aug  8 10:24 apply_openmw_051_tsp_cursor_debug_v10.sh
+-rwxrwx--x  1 1000 1000     19752 Aug  8 10:09 apply_openmw_051_tsp_cursor_load_controls_v9.sh
+-rwx--x--x  1 1000 1000     27497 Aug  9 23:37 apply_openmw_051_tsp_depth_hybridload_v13.sh
+-rwx--x--x  1 1000 1000     46153 Aug 10 02:14 apply_openmw_051_tsp_depth_warmreload_v13.sh
+-rwx--x--x  1 1000 1000     29144 Aug  9 09:28 apply_openmw_051_tsp_freshload_stability_revision.sh
+-rwxrwx--x  1 1000 1000     20741 Aug  7 20:26 apply_openmw_051_tsp_legacy_direct_render_v2.sh
+-rwxrwx--x  1 1000 1000     18847 Aug  7 22:52 apply_openmw_051_tsp_lod_water_reload_v4.sh
+-rwxrwx--x  1 1000 1000     51974 Aug  8 17:43 apply_openmw_051_tsp_safenav_memtrace_v10.sh
+-rw-r--r--  1 root root     51365 Aug  8 17:29 apply_openmw_051_tsp_safenav_memtrace_v10.sh.before-water-filter-fix
+-rwxrwx--x  1 1000 1000     29152 Aug  8 10:21 apply_openmw_051_tsp_safenav_v8.sh
+-rwxrwx--x  1 1000 1000     25759 Aug  8 08:52 apply_openmw_051_tsp_software_cursor_mipmap_v8.sh
+-rwxrwx--x  1 1000 1000     25717 Aug  8 08:56 apply_openmw_051_tsp_software_cursor_mipmap_v8_fixed.sh
+-rwxrwx--x  1 1000 1000     35866 Aug  8 05:08 apply_openmw_051_tsp_stability_water_nav_v7.sh
+-rwxrwx--x  1 1000 1000     10566 Aug  8 17:43 apply_openmw_051_tsp_test_cursor_v11.sh
+-rwx--x--x  1 1000 1000     25667 Aug  8 19:48 apply_openmw_051_tsp_transition_memory_purge.sh
+-rwx--x--x  1 1000 1000     20759 Aug 10 03:55 apply_openmw_051_tsp_v14_depthpartition_warmguard.sh
+-rwx--x--x  1 1000 1000     44818 Aug 10 05:25 apply_openmw_051_tsp_v15_depthbands_syncguard.sh
+-rwx--x--x  1 1000 1000     50098 Aug 10 05:36 apply_openmw_051_tsp_v15_depthbands_syncguard_backupbase.sh
+-rwx--x--x  1 1000 1000     13231 Aug 10 05:22 apply_openmw_051_tsp_v15_visibility_freshguard.sh
+-rwx--x--x  1 1000 1000     35675 Aug 10 07:45 apply_openmw_051_tsp_v17_adaptive_depth_fps.sh
+-rwxrwx--x  1 1000 1000     17902 Aug  8 02:58 apply_openmw_051_tsp_water_crash_stability_v6.sh
+-rwxrwx--x  1 1000 1000     26226 Aug  7 22:30 apply_openmw_051_tsp_water_distant_groundcover_v3.sh
+-rwxrwxr-x  1 1000 1000      4698 Aug  5 12:39 build_gptokeyb2_speed.sh
+-rwxr-xr-x  1 root root       127 Aug  3 22:46 build_openmw.sh
+-rwxrwx--x  1 1000 1000     19896 Aug  8 08:49 build_openmw_051_navmesh_progress_ui_v1.sh
+-rwxrwxr-x  1 1000 1000     15309 Aug  5 05:52 build_openmw_051_tsp.sh
+-rwxrwxr-x  1 1000 1000     17660 Aug  5 06:00 build_openmw_051_tsp_v2.sh
+-rwxrwxr-x  1 1000 1000     20495 Aug  5 06:04 build_openmw_051_tsp_v3.sh
+-rwxrwxr-x  1 1000 1000     32163 Aug  5 19:06 build_openmw_051_tsp_v4.sh
+-rwxr-xr-x  1 root root      3311 Aug  5 08:55 build_openmw_051_tsp_v4.sh.before-sdl2-fix
+-rwxrwxr-x  1 1000 1000     12932 Aug  6 05:40 dump_openmw_051_runtime_libs.sh
+-rwxrwxr-x  1 1000 1000      5348 Aug  5 19:47 finish_openmw_051_link.sh
+drwxr-xr-x 14 root root      4096 Aug 15 08:50 gl4es
+drwxr-xr-x  2 root root      4096 Aug 11 04:45 gl4es-openmw51-texturedebug-export
+drwxr-xr-x 17 root root      4096 Aug 16 22:41 gl4es-tsps
+-rw-r--r--  1 root root    523310 Aug  4 19:08 gl4es-tsps-1.1.7-nogbm.tar.gz
+-rw-r--r--  1 root root    527117 Aug  4 18:47 gl4es-tsps-1.1.7.tar.gz
+drwxr-xr-x  2 root root      4096 Aug  4 18:47 gl4es-tsps-export
+drwxr-xr-x  2 root root      4096 Aug 16 22:44 gl4es-tsps-export-o3
+drwxr-xr-x  2 root root      4096 Aug 10 20:12 gl4es-tsps-framebuffer-scaler-export
+drwxr-xr-x  2 root root      4096 Aug 16 22:41 gl4es-tsps-libbackup
+drwxr-xr-x  2 root root      4096 Aug  4 19:08 gl4es-tsps-nogbm-export
+-rw-r--r--  1 root root    629276 Aug 16 22:44 gl4es-tsps-o3.tar.gz
+drwxr-xr-x  2 root root      4096 Aug 11 00:22 gl4es-tsps-v31-native-scaler-export
+drwxr-xr-x  8 root root      4096 Aug  5 04:03 gptokeyb2
+drwxr-xr-x  2 root root      4096 Aug  5 04:05 gptokeyb2-package
+drwxr-xr-x  5 root root      4096 Aug  5 12:46 gptokeyb2-speed-build
+drwxr-xr-x  7 root root      4096 Aug  5 12:44 gptokeyb2-speed-src
+-rwxr-xr-x  1 root root     92888 Aug  5 12:46 gptokeyb2_speed.aarch64
+-rw-r--r--  1 root root     10120 Aug  5 12:46 libinterpose.so
+-rwxr-xr-x  1 root root     18352 Aug 11 04:16 libtsp_fullscreen_scaler-v33.so
+-rwxr-xr-x  1 root root     18352 Aug 11 05:40 libtsp_fullscreen_scaler-v35.so
+-rwxr-xr-x  1 root root     14256 Aug 11 00:31 libtsp_fullscreen_scaler.so
+-rwxr-xr-x  1 root root     23872 Aug 16 17:14 libtsp_glwatch.so
+drwxr-xr-x 16 root root      4096 Aug  3 20:21 mygui
+drwxr-xr-x  9 root root      4096 Aug  6 06:21 mygui-3.4.2-openmw048-dropdown-build
+drwxr-xr-x  4 root root      4096 Aug  6 06:21 mygui-3.4.2-openmw048-dropdown-install
+drwxr-xr-x 15 root root      4096 Aug  6 06:00 mygui-3.4.2-openmw048-dropdown-src
+drwxr-xr-x 10 root root      4096 Aug  5 08:43 mygui-3.4.3-build
+drwxr-xr-x  4 root root      4096 Aug  5 08:43 mygui-3.4.3-install
+drwxr-xr-x  9 root root      4096 Aug  5 19:27 mygui-3.4.3-openmw051-gcc13-build
+drwxr-xr-x  4 root root      4096 Aug  5 19:29 mygui-3.4.3-openmw051-gcc13-install
+drwxr-xr-x 15 root root      4096 Aug  5 08:37 mygui-3.4.3-src
+drwxr-xr-x  2 root root      4096 Aug  6 09:07 openal-fix
+drwxr-xr-x  3 root root      4096 Aug  6 09:06 openmw-0.48-dropdown-fix
+-rw-r--r--  1 root root 281431201 Aug  6 09:07 openmw-0.48-dropdown-fix-aarch64.tar.gz
+-rw-r--r--  1 root root      4280 Aug  5 19:48 openmw-0.51-final-link.log
+-rw-r--r--  1 root root     30343 Aug  5 19:29 openmw-0.51-mygui-link-repair.log
+-rw-r--r--  1 root root  84072920 Aug  6 06:21 openmw-0.51-runtime-aarch64.tar.gz
+drwxr-xr-x  5 root root      4096 Aug  6 06:18 openmw-0.51-runtime-export
+drwxr-xr-x 11 root root      4096 Aug 13 09:27 openmw-0.51-tsp-build
+-rw-r--r--  1 root root         2 Aug  5 19:11 openmw-0.51-tsp-build.exitcode
+-rw-r--r--  1 root root     64186 Aug  5 19:11 openmw-0.51-tsp-build.log
+-rwxr-xr-x  1 root root  35932008 Aug  8 10:26 openmw-0.51-tsp-cursor-debug-v10
+-rwxr-xr-x  1 root root  36079448 Aug  8 10:13 openmw-0.51-tsp-cursor-load-v9
+-rwxr-xr-x  1 root root  56206976 Aug  9 23:41 openmw-0.51-tsp-depth-hybridload-v13
+-rwxr-xr-x  1 root root  56263032 Aug 10 02:19 openmw-0.51-tsp-depth-warmreload-v13
+-rwxr-xr-x  1 root root  36116312 Aug  7 19:29 openmw-0.51-tsp-direct-fb-v1
+-rwxr-xr-x  1 root root  56219552 Aug  9 11:37 openmw-0.51-tsp-freshload-stability
+-rwxr-xr-x  1 root root  36013912 Aug  7 20:00 openmw-0.51-tsp-gl4es-white-screen-linkfix
+-rwxr-xr-x  1 root root  36075320 Aug  7 11:46 openmw-0.51-tsp-input-graphics-v3
+-rwxr-xr-x  1 root root  36120408 Aug  7 12:27 openmw-0.51-tsp-input-graphics-v5
+-rwxr-xr-x  1 root root  35993432 Aug  7 12:59 openmw-0.51-tsp-input-graphics-v6
+-rwxr-xr-x  1 root root  36095800 Aug  7 11:21 openmw-0.51-tsp-input-v1
+-rwxr-xr-x  1 root root  56269312 Aug  7 20:29 openmw-0.51-tsp-legacy-direct-render-v2
+drwxr-xr-x  2 root root      4096 Aug  8 08:57 openmw-0.51-tsp-link-compat
+-rwxr-xr-x  1 root root  56219968 Aug  7 22:55 openmw-0.51-tsp-lod-water-reload-v4
+drwxr-xr-x  6 root root      4096 Aug  8 05:11 openmw-0.51-tsp-package
+-rw-r--r--  1 root root         2 Aug  5 08:05 openmw-0.51-tsp-resume.exitcode
+-rw-r--r--  1 root root     72066 Aug  5 08:05 openmw-0.51-tsp-resume.log
+-rwxr-xr-x  1 root root  56335984 Aug  8 18:22 openmw-0.51-tsp-safenav-memtrace-v10
+-rw-r--r--  1 root root  15128869 Aug  8 18:23 openmw-0.51-tsp-safenav-memtrace-v10-bundle.tar.gz
+-rwxr-xr-x  1 root root  36034392 Aug  8 08:59 openmw-0.51-tsp-software-cursor-mipmap-v8
+drwxr-xr-x 15 root root      4096 Aug  7 11:19 openmw-0.51-tsp-src
+-rwxr-xr-x  1 root root  36042584 Aug  8 05:14 openmw-0.51-tsp-stability-water-nav-v7
+-rwxr-xr-x  1 root root  36026248 Aug  8 18:39 openmw-0.51-tsp-test-cursor-v11
+-rwxr-xr-x  1 root root  56232744 Aug  8 23:06 openmw-0.51-tsp-transition-memory-purge
+-rwxr-xr-x  1 root root  56272712 Aug 10 03:58 openmw-0.51-tsp-v14-depthpartition-warmguard
+-rwxr-xr-x  1 root root  56215896 Aug 10 05:41 openmw-0.51-tsp-v15-depthbands-syncguard-backupbase
+-rwxr-xr-x  1 root root  56255784 Aug 10 05:24 openmw-0.51-tsp-v15-visibility-freshguard
+-rwxr-xr-x  1 root root  56306000 Aug 10 07:55 openmw-0.51-tsp-v17-adaptive-depth-fps
+-rwxr-xr-x  1 root root  56306272 Aug 10 08:50 openmw-0.51-tsp-v18-deferred-depth-native-res
+-rwxr-xr-x  1 root root  56246920 Aug 10 09:30 openmw-0.51-tsp-v19-clean-performance-resolutions
+-rwxr-xr-x  1 root root  56268272 Aug 10 10:40 openmw-0.51-tsp-v20-internal-render-scale
+-rwxr-xr-x  1 root root  56245280 Aug  8 03:00 openmw-0.51-tsp-water-crash-stability-v6
+-rwxr-xr-x  1 root root  56197536 Aug  7 22:32 openmw-0.51-tsp-water-distant-v3
+-rw-r--r--  1 root root     45476 Aug  4 12:22 openmw-gl4es-shaders.tar.gz
+drwxr-xr-x  3 root root      4096 Aug  4 12:08 openmw-osg-export
+-rw-r--r--  1 root root   6417023 Aug  4 12:08 openmw-osg-plugins.tar.gz
+-rw-r--r--  1 root root  18385223 Aug  4 18:13 openmw-patched-build-real.tar.gz
+-rw-r--r--  1 root root  18384001 Aug  4 18:04 openmw-patched-build.tar.gz
+drwxr-xr-x  4 root root      4096 Aug  4 18:04 openmw-patched-export
+drwxr-xr-x  4 root root      4096 Aug  4 18:13 openmw-patched-export-real
+-rw-r--r--  1 root root         0 Aug 13 09:08 openmw51-dialogue-font-setting-20260813-020847.log
+-rw-r--r--  1 root root         0 Aug 13 09:14 openmw51-dialogue-font-setting-20260813-021402.log
+-rw-r--r--  1 root root     71386 Aug 13 09:28 openmw51-dialogue-font-setting-20260813-022136.log
+-rw-r--r--  1 root root        22 Aug 13 08:31 openmw51-dialogue-readability-20260813-013156.log
+-rw-r--r--  1 root root        22 Aug 13 08:32 openmw51-dialogue-readability-20260813-013246.log
+-rw-r--r--  1 root root     57428 Aug 13 09:00 openmw51-dialogue-readability-build-20260813-015813.log
+-rw-r--r--  1 root root    112640 Aug 11 10:34 openmw51-v35_3-ui-layouts.tar
+-rwxr-xr-x  1 root root  18150112 Aug  6 21:09 openmw_cursor_graphics_compat_v12
+-rwxr-xr-x  1 root root  18133728 Aug  5 22:53 openmw_cursor_l3_v3
+-rwxr-xr-x  1 root root  18141920 Aug  6 09:58 openmw_cursor_menu_select_v4
+-rwxr-xr-x  1 root root  18158304 Aug  5 19:17 openmw_cursor_v2
+-rw-r--r--  1 root root     17861 Aug  8 08:51 openmw_navmesh_progress_v1.cpp
+drwxr-xr-x 14 root root      4096 Aug  3 10:20 osg
+drwxr-xr-x 14 root root      4096 Aug  3 10:20 osg.before-polygon-offset-patch
+-rwxr-xr-x  1 root root     10152 Aug  4 21:41 press_f12
+-rw-r--r--  1 root root      2947 Aug 15 04:13 press_f12.c
+-rwxrwx---  1 1000 1000      7801 Aug 14 05:18 rebuild_gl4es_tsps_o3.sh
+-rwxrwxr-x  1 1000 1000     10295 Aug  6 05:59 rebuild_openmw_048_mygui_dropdown_fix.sh
+-rwxrwxr-x  1 1000 1000     10336 Aug  6 06:03 rebuild_openmw_048_mygui_dropdown_fix_v2.sh
+-rwxrwxr-x  1 1000 1000      9679 Aug  5 19:26 repair_openmw_051_mygui_link.sh
+drwxr-xr-x  6 root root      4096 Aug  5 08:02 sdl2-2.30.12-build
+drwxr-xr-x  6 root root      4096 Aug  5 08:02 sdl2-2.30.12-install
+drwxr-xr-x 21 root root      4096 Aug  5 07:54 sdl2-2.30.12-src
+drwxr-xr-x  3 root root      4096 Aug  5 07:34 sdl2-build
+drwxr-xr-x  2 root root      4096 Aug  5 07:34 sdl2-install
+drwxr-xr-x 21 root root      4096 Aug  5 07:34 sdl2-src
+-rw-r--r--  1 root root    655558 Aug 16 22:47 src-export.tar.gz
+-rw-r--r--  1 root root     22976 Aug 15 04:13 tsp_fullscreen_scaler_v32.c
+-rw-r--r--  1 root root     27569 Aug 15 04:13 tsp_fullscreen_scaler_v33.c
+-rw-r--r--  1 root root     28331 Aug 15 04:13 tsp_fullscreen_scaler_v35.c
+-rwxrwx---  1 1000 1000     29495 Aug 16 17:13 tsp_glwatch.c
+-rwxr-xr-x  1 root root     10152 Aug  5 04:35 tsp_input_test
+-rw-r--r--  1 root root      4676 Aug 15 04:13 tsp_input_test.c
+-rwxr-xr-x  1 root root     23432 Aug  9 09:25 tsp_openmw_controls
+-rw-r--r--  1 root root     17672 Aug 15 04:13 tsp_openmw_controls.c
+-rwxr-xr-x  1 root root     18360 Aug  7 11:46 tsp_openmw_controls_051_v1
+-rw-r--r--  1 root root     20637 Aug 15 04:14 tsp_openmw_controls_051_v1.c
+-rwxr-xr-x  1 root root     14264 Aug  5 08:29 tsp_openmw_controls_v2
+-rw-rw-r--  1 1000 1000     17276 Aug 15 04:13 tsp_openmw_controls_v2.c
+-rwxr-xr-x  1 root root     14264 Aug  5 09:32 tsp_openmw_controls_v3
+-rw-rw-r--  1 1000 1000     17242 Aug 15 04:14 tsp_openmw_controls_v3.c
+-rwxr-xr-x  1 root root     10152 Aug  5 05:20 tsp_sdl_guid
+-rw-r--r--  1 root root      1070 Aug 15 04:13 tsp_sdl_guid.c
+
+=== directories ===
+/root
+/root/mygui-3.4.3-openmw051-gcc13-install
+/root/gl4es-tsps-nogbm-export
+/root/gl4es
+/root/openmw-0.51-runtime-export
+/root/sdl2-2.30.12-install
+/root/gl4es-tsps-export
+/root/openmw-patched-export-real
+/root/gl4es-openmw51-texturedebug-export
+/root/sdl2-src
+/root/mygui-3.4.2-openmw048-dropdown-install
+/root/openmw-osg-export
+/root/mygui-3.4.3-openmw051-gcc13-build
+/root/gptokeyb2
+/root/openmw-0.48-dropdown-fix
+/root/osg.before-polygon-offset-patch
+/root/gptokeyb2-speed-src
+/root/gl4es-tsps-libbackup
+/root/sdl2-build
+/root/sdl2-install
+/root/mygui-3.4.2-openmw048-dropdown-build
+/root/openmw-0.51-tsp-build
+/root/mygui-3.4.3-build
+/root/gl4es-tsps-framebuffer-scaler-export
+/root/gptokeyb2-speed-build
+/root/gl4es-tsps
+/root/osg
+/root/openmw-0.51-tsp-package
+/root/openmw-0.51-tsp-src
+/root/mygui
+/root/mygui-3.4.2-openmw048-dropdown-src
+/root/mygui-3.4.3-install
+/root/gptokeyb2-package
+/root/mygui-3.4.3-src
+/root/Downloads
+/root/gl4es-tsps-export-o3
+/root/sdl2-2.30.12-build
+/root/openal-fix
+/root/sdl2-2.30.12-src
+/root/openmw-patched-export
+/root/openmw-0.51-tsp-link-compat
+/root/gl4es-tsps-v31-native-scaler-export

@@ -1,0 +1,58 @@
+diff --git a/src/render/opengles2/SDL_shaders_gles2.c b/src/render/opengles2/SDL_shaders_gles2.c
+index ff45522..5fb0b5d 100644
+--- a/src/render/opengles2/SDL_shaders_gles2.c
++++ b/src/render/opengles2/SDL_shaders_gles2.c
+@@ -41,19 +41,19 @@ static const char GLES2_Fragment_Include_Best_Texture_Precision[] = \
+ "#define SDL_TEXCOORD_PRECISION mediump\n"                      \
+ "#endif\n"                                                      \
+ "\n"                                                            \
+-"precision mediump float;\n"                                    \
++"precision highp float;\n"                                    \
+ "\n"                                                            \
+ ;
+ 
+ static const char GLES2_Fragment_Include_Medium_Texture_Precision[] = \
+ "#define SDL_TEXCOORD_PRECISION mediump\n"                      \
+-"precision mediump float;\n"                                    \
++"precision highp float;\n"                                    \
+ "\n"                                                            \
+ ;
+ 
+ static const char GLES2_Fragment_Include_High_Texture_Precision[] = \
+ "#define SDL_TEXCOORD_PRECISION highp\n"                        \
+-"precision mediump float;\n"                                    \
++"precision highp float;\n"                                    \
+ "\n"                                                            \
+ ;
+ 
+diff --git a/test/testgles2_sdf.c b/test/testgles2_sdf.c
+index 2d6427b..baa246d 100644
+--- a/test/testgles2_sdf.c
++++ b/test/testgles2_sdf.c
+@@ -182,7 +182,7 @@ static const char GLES2_VertexSrc_Default_[] = " \
+ ";
+ 
+ static const char GLES2_FragmentSrc_TextureABGRSrc_[] = " \
+-    precision mediump float; \
++    precision highp float; \
+     uniform sampler2D u_texture; \
+     uniform vec4 u_color; \
+     varying vec2 v_texCoord; \
+@@ -198,7 +198,7 @@ static const char GLES2_FragmentSrc_TextureABGRSrc_[] = " \
+ static const char GLES2_FragmentSrc_TextureABGRSrc_SDF[] = " \
+     #extension GL_OES_standard_derivatives : enable\n\
+     \
+-    precision mediump float; \
++    precision highp float; \
+     uniform sampler2D u_texture; \
+     uniform vec4 u_color; \
+     varying vec2 v_texCoord; \
+@@ -222,7 +222,7 @@ static const char GLES2_FragmentSrc_TextureABGRSrc_SDF[] = " \
+ static const char *GLES2_FragmentSrc_TextureABGRSrc_SDF_dbg = " \
+     #extension GL_OES_standard_derivatives : enable\n\
+     \
+-    precision mediump float; \
++    precision highp float; \
+     uniform sampler2D u_texture; \
+     uniform vec4 u_color; \
+     varying vec2 v_texCoord; \

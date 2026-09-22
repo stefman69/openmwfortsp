@@ -1,0 +1,2048 @@
+diff --git a/src/gl/buffers.c b/src/gl/buffers.c
+index a66311f..cf0f0f4 100644
+--- a/src/gl/buffers.c
++++ b/src/gl/buffers.c
+@@ -36,6 +36,52 @@ static void tsp_vbo_log(const char* what, unsigned int id, long len, const void*
+ }
+ 
+ 
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++/* TSP_VBO_ORPHAN_V5 - a fresh GLES buffer name for every write into a DYNAMIC/STREAM array VBO.
++ * The full gl4es shadow is uploaded into the new name with glBufferData, the old name is deleted
++ * (the driver keeps its storage alive for any draw already queued on it), every attrib that
++ * referenced the old name is repointed, and the gles-side attrib cache is invalidated so
++ * realize_glenv re-issues glVertexAttribPointer before the next draw. Nothing here relies on
++ * the driver honouring a respec of a bound buffer (which is what V2/V3/V4 all assumed).
++ * STATIC_DRAW buffers keep the stock glBufferSubData path. Gate: LIBGL_TSP_ORPHAN exactly "1". */
++void rebind_real_buff_arrays(int old_buffer, int new_buffer);   /* defined further down in this file */
++static int tsp_orphan_on(void) {
++    static int v = -1;
++    if (v < 0) { const char* e = getenv("LIBGL_TSP_ORPHAN"); v = (e && e[0] == '1' && e[1] == 0) ? 1 : 0; }
++    return v;
++}
++static void tsp_orphan_report(long sz, int fallback) {
++    static unsigned long n = 0, kb = 0, fb = 0;
++    kb += (unsigned long)(sz >> 10);
++    if (fallback) ++fb;
++    if ((++n & 0xffff) == 1) {   /* first rotation, then every 65536 */
++        printf("TSP_VBO_ORPHAN_V5 on=1 (fresh buffer name per dynamic write; supersedes V1-V4) rotate=%lu kb=%lu fallback=%lu\n", n, kb, fb);
++        fflush(stdout);
++    }
++}
++/* returns 1 when the buffer was rotated onto a fresh name, 0 when the caller must take the stock path */
++static int tsp_orphan_rotate(glbuffer_t* buff, GLenum target) {
++    LOAD_GLES(glGenBuffers);
++    LOAD_GLES(glBufferData);
++    GLuint old = buff->real_buffer, fresh = 0;
++    if (!buff->data || buff->size <= 0) return 0;
++    gles_glGenBuffers(1, &fresh);
++    if (!fresh) return 0;
++    bindBuffer(target, fresh);
++    gles_glBufferData(target, buff->size, buff->data, buff->usage);
++    buff->real_buffer = fresh;
++    rebind_real_buff_arrays(old, fresh);   /* glstate->vao attribs that named the old buffer */
++    if (glstate->gleshard) {              /* gles-side cache: force a fresh glVertexAttribPointer */
++        for (int i = 0; i < hardext.maxvattrib; ++i)
++            if (glstate->gleshard->vertexattrib[i].real_buffer == old)
++                glstate->gleshard->vertexattrib[i].real_buffer = 0;
++    }
++    deleteSingleBuffer(old);
++    return 1;
++}
++
+ //#define DEBUG
+ #ifdef DEBUG
+ #define DBG(a) a
+@@ -325,6 +371,15 @@ void APIENTRY_GL4ES gl4es_glBufferSubData(GLenum target, GLintptr offset, GLsize
+     }
+ 
+     if((target==GL_ARRAY_BUFFER || target==GL_ELEMENT_ARRAY_BUFFER) && buff->real_buffer) {
++        if(target==GL_ARRAY_BUFFER && (buff->usage==GL_DYNAMIC_DRAW || buff->usage==GL_STREAM_DRAW) && tsp_orphan_on()) {   /* TSP_VBO_ORPHAN_V5 */
++            memcpy((char*)buff->data + offset, data, size);   /* shadow first: the fresh name is filled from it */
++            if(tsp_orphan_rotate(buff, target)) {
++                tsp_orphan_report(size, 0);
++                noerrorShim();
++                return;
++            }
++            tsp_orphan_report(size, 1);   /* could not rotate: fall through to the stock SubData below */
++        }
+         LOAD_GLES(glBufferSubData);
+         LOAD_GLES(glBindBuffer);
+         bindBuffer(target, buff->real_buffer);
+diff --git a/src/gl/framebuffers.c b/src/gl/framebuffers.c
+index 9431e8e..c30f4a1 100644
+--- a/src/gl/framebuffers.c
++++ b/src/gl/framebuffers.c
+@@ -14,6 +14,507 @@
+ #include <dlfcn.h>
+ #include <string.h>
+ 
++/* TSP_NATIVE_LIFE_DIAG_V1 -------------------------------------------------
++ * Native GLES lifetime accounting. Dormant unless LIBGL_TSP_NATIVE_LIFE=1.
++ * With diagnostics OFF: no files, no sysfs/proc reads, no glGet probes and no
++ * per-draw work. Calls exist only on resource create/delete/storage paths.
++ */
++typedef struct { GLuint id; unsigned long long bytes; int used; } tsp_native_rb_rec_t;
++#define TSP_NATIVE_RB_MAX 2048
++static tsp_native_rb_rec_t tsp_native_rb[TSP_NATIVE_RB_MAX];
++static unsigned long tsp_native_fbo_gen=0, tsp_native_fbo_del=0;
++static unsigned long tsp_native_rb_gen=0, tsp_native_rb_del=0;
++static unsigned long tsp_native_tex_gen=0, tsp_native_tex_del=0;
++static unsigned long long tsp_native_rb_live_bytes=0;
++static unsigned long tsp_native_seq=0;
++
++static int tsp_native_life_on(void) {
++    static int chk=0,on=0;
++    if(!chk){const char*e=getenv("LIBGL_TSP_NATIVE_LIFE");on=(e&&e[0]=='1');chk=1;}
++    return on;
++}
++static FILE* tsp_native_life_file(void) {
++    static int chk=0; static FILE* f=NULL;
++    if(!tsp_native_life_on()) return NULL;
++    if(!chk){
++        const char*p=getenv("LIBGL_TSP_NATIVE_LIFE_PATH"); chk=1;
++        if(p&&p[0]){f=fopen(p,"a");if(f){fprintf(f,"# TSP_NATIVE_LIFE_DIAG_V1 seq event fields\n");fflush(f);}}
++    }
++    return f;
++}
++static void tsp_native_log(const char*fmt,...) {
++    FILE*f=tsp_native_life_file(); if(!f)return;
++    unsigned long seq=__sync_add_and_fetch(&tsp_native_seq,1);
++    fprintf(f,"seq=%lu ",seq);
++    va_list ap;va_start(ap,fmt);vfprintf(f,fmt,ap);va_end(ap);fputc('\n',f);fflush(f);
++}
++static unsigned long long tsp_native_rb_estimate(GLenum fmt,GLsizei w,GLsizei h) {
++    unsigned long long bpp=4;
++    if(fmt==GL_STENCIL_INDEX8)bpp=1;
++    else if(fmt==GL_DEPTH_COMPONENT16||fmt==GL_RGB565_OES||fmt==GL_RGBA4_OES)bpp=2;
++    return (unsigned long long)w*(unsigned long long)h*bpp;
++}
++static tsp_native_rb_rec_t* tsp_native_rb_slot(GLuint id,int create) {
++    tsp_native_rb_rec_t*empty=NULL;if(!id)return NULL;
++    for(int i=0;i<TSP_NATIVE_RB_MAX;i++){
++        if(tsp_native_rb[i].used&&tsp_native_rb[i].id==id)return &tsp_native_rb[i];
++        if(!tsp_native_rb[i].used&&!empty)empty=&tsp_native_rb[i];
++    }
++    if(create&&empty){empty->used=1;empty->id=id;empty->bytes=0;return empty;}
++    return NULL;
++}
++static void tsp_native_fbo_generated(GLuint id){if(!tsp_native_life_on()||!id)return;++tsp_native_fbo_gen;tsp_native_log("GEN_FBO id=%u gen=%lu del=%lu live=%ld",id,tsp_native_fbo_gen,tsp_native_fbo_del,(long)tsp_native_fbo_gen-(long)tsp_native_fbo_del);}
++static void tsp_native_fbo_deleted(GLuint id){if(!tsp_native_life_on()||!id)return;++tsp_native_fbo_del;tsp_native_log("DEL_FBO id=%u gen=%lu del=%lu live=%ld",id,tsp_native_fbo_gen,tsp_native_fbo_del,(long)tsp_native_fbo_gen-(long)tsp_native_fbo_del);}
++static void tsp_native_rb_generated(GLuint id,const char*owner){if(!tsp_native_life_on()||!id)return;++tsp_native_rb_gen;(void)tsp_native_rb_slot(id,1);tsp_native_log("GEN_RB id=%u owner=%s gen=%lu del=%lu live=%ld bytes=%llu",id,owner?owner:"?",tsp_native_rb_gen,tsp_native_rb_del,(long)tsp_native_rb_gen-(long)tsp_native_rb_del,tsp_native_rb_live_bytes);}
++static void tsp_native_rb_deleted(GLuint id,const char*owner){
++    if(!tsp_native_life_on()||!id)return;tsp_native_rb_rec_t*r=tsp_native_rb_slot(id,0);
++    if(r){if(tsp_native_rb_live_bytes>=r->bytes)tsp_native_rb_live_bytes-=r->bytes;else tsp_native_rb_live_bytes=0;r->used=0;r->id=0;r->bytes=0;}
++    ++tsp_native_rb_del;tsp_native_log("DEL_RB id=%u owner=%s gen=%lu del=%lu live=%ld bytes=%llu",id,owner?owner:"?",tsp_native_rb_gen,tsp_native_rb_del,(long)tsp_native_rb_gen-(long)tsp_native_rb_del,tsp_native_rb_live_bytes);
++}
++static void tsp_native_rb_storage(GLuint id,GLenum fmt,GLsizei w,GLsizei h,const char*owner){
++    if(!tsp_native_life_on()||!id)return;tsp_native_rb_rec_t*r=tsp_native_rb_slot(id,1);unsigned long long b=tsp_native_rb_estimate(fmt,w,h);
++    if(r){if(tsp_native_rb_live_bytes>=r->bytes)tsp_native_rb_live_bytes-=r->bytes;else tsp_native_rb_live_bytes=0;r->bytes=b;tsp_native_rb_live_bytes+=b;}
++    tsp_native_log("RB_STORAGE id=%u owner=%s fmt=0x%x size=%dx%d est=%llu live_bytes=%llu",id,owner?owner:"?",fmt,w,h,b,tsp_native_rb_live_bytes);
++}
++/* TSP_NATIVE_TEXTURE_DIAG_V2 ----------------------------------------------
++ * New diagnostic area: exact native GLES texture object + backing-storage
++ * accounting, plus map RTT readback.  Everything in this block is dormant
++ * unless LIBGL_TSP_TEXTURE_DIAG=1.
++ *
++ * Unlike TSP_TEXLIFE_V2 (which follows gl4es wrapper objects), this records
++ * the native GLES names and every glTexImage2D/glCompressedTexImage2D backing
++ * allocation that actually reaches the PowerVR driver.
++ */
++typedef struct {
++    GLuint id;
++    unsigned long long level_bytes[16];
++    unsigned long long total_bytes;
++    int used;
++} tsp_native_tex_v2_t;
++
++static tsp_native_tex_v2_t* tsp_tex_v2 = NULL;
++static size_t tsp_tex_v2_cap = 0;
++static unsigned long tsp_tex_v2_gen = 0;
++static unsigned long tsp_tex_v2_del = 0;
++static unsigned long tsp_tex_v2_storage = 0;
++static unsigned long long tsp_tex_v2_live_bytes = 0;
++static unsigned long tsp_tex_v2_seq = 0;
++
++static int tsp_texture_diag_on(void)
++{
++    static int checked = 0;
++    static int on = 0;
++    if (!checked) {
++        const char* e = getenv("LIBGL_TSP_TEXTURE_DIAG");
++        on = (e && e[0] == '1');
++        checked = 1;
++    }
++    return on;
++}
++
++static FILE* tsp_texture_diag_file(void)
++{
++    static int checked = 0;
++    static FILE* file = NULL;
++    if (!tsp_texture_diag_on())
++        return NULL;
++    if (!checked) {
++        const char* p = getenv("LIBGL_TSP_TEXTURE_DIAG_PATH");
++        checked = 1;
++        if (p && p[0]) {
++            file = fopen(p, "a");
++            if (file) {
++                fprintf(file, "# TSP_NATIVE_TEXTURE_DIAG_V2 seq event fields\n");
++                fflush(file);
++            }
++        }
++    }
++    return file;
++}
++
++static void tsp_texture_diag_log(const char* fmt, ...)
++{
++    FILE* f = tsp_texture_diag_file();
++    if (!f)
++        return;
++    unsigned long seq = __sync_add_and_fetch(&tsp_tex_v2_seq, 1);
++    fprintf(f, "seq=%lu ", seq);
++    va_list ap;
++    va_start(ap, fmt);
++    vfprintf(f, fmt, ap);
++    va_end(ap);
++    fputc('\n', f);
++    fflush(f);
++}
++
++static tsp_native_tex_v2_t* tsp_tex_v2_slot(GLuint id, int create)
++{
++    if (!id)
++        return NULL;
++
++    if ((size_t)id >= tsp_tex_v2_cap) {
++        if (!create)
++            return NULL;
++
++        size_t cap = tsp_tex_v2_cap ? tsp_tex_v2_cap : 1024;
++        while (cap <= (size_t)id)
++            cap *= 2;
++
++        tsp_native_tex_v2_t* n = realloc(
++            tsp_tex_v2,
++            cap * sizeof(tsp_native_tex_v2_t));
++
++        if (!n) {
++            tsp_texture_diag_log(
++                "ERROR table_alloc id=%u requested_cap=%zu",
++                id,
++                cap);
++            return NULL;
++        }
++
++        memset(
++            n + tsp_tex_v2_cap,
++            0,
++            (cap - tsp_tex_v2_cap) * sizeof(tsp_native_tex_v2_t));
++
++        tsp_tex_v2 = n;
++        tsp_tex_v2_cap = cap;
++    }
++
++    tsp_native_tex_v2_t* r = &tsp_tex_v2[id];
++
++    if (create && !r->used) {
++        memset(r, 0, sizeof(*r));
++        r->id = id;
++        r->used = 1;
++    }
++
++    return r->used ? r : NULL;
++}
++
++static unsigned int tsp_texture_channels(GLenum format)
++{
++    switch (format) {
++        case GL_ALPHA:
++        case GL_LUMINANCE:
++        case GL_RED:
++        case GL_DEPTH_COMPONENT:
++            return 1;
++        case GL_LUMINANCE_ALPHA:
++        case GL_RG:
++            return 2;
++        case GL_RGB:
++            return 3;
++        case GL_RGBA:
++        default:
++            return 4;
++    }
++}
++
++static unsigned long long tsp_texture_estimate(
++    GLsizei width,
++    GLsizei height,
++    GLenum format,
++    GLenum type)
++{
++    if (width <= 0 || height <= 0)
++        return 0;
++
++    unsigned long long bpp;
++
++    switch (type) {
++        case GL_UNSIGNED_SHORT_5_6_5:
++        case GL_UNSIGNED_SHORT_4_4_4_4:
++        case GL_UNSIGNED_SHORT_5_5_5_1:
++            bpp = 2;
++            break;
++        case GL_HALF_FLOAT_OES:
++        case GL_HALF_FLOAT:
++            bpp = 2ULL * tsp_texture_channels(format);
++            break;
++        case GL_FLOAT:
++            bpp = 4ULL * tsp_texture_channels(format);
++            break;
++        case GL_UNSIGNED_SHORT:
++        case GL_SHORT:
++            bpp = 2ULL * tsp_texture_channels(format);
++            break;
++        case GL_UNSIGNED_INT:
++        case GL_INT:
++            bpp = 4ULL * tsp_texture_channels(format);
++            break;
++        case GL_UNSIGNED_BYTE:
++        case GL_BYTE:
++        default:
++            bpp = tsp_texture_channels(format);
++            break;
++    }
++
++    return (unsigned long long)width
++        * (unsigned long long)height
++        * bpp;
++}
++
++void tsp_native_texture_generated_v2(GLuint id, const char* owner)
++{
++    if (!tsp_texture_diag_on() || !id)
++        return;
++
++    tsp_native_tex_v2_t* r = tsp_tex_v2_slot(id, 1);
++    int reused = (r && r->total_bytes != 0);
++
++    ++tsp_tex_v2_gen;
++
++    tsp_texture_diag_log(
++        "GEN_TEX id=%u owner=%s gen=%lu del=%lu live=%ld tracked_bytes=%llu reused=%d",
++        id,
++        owner ? owner : "?",
++        tsp_tex_v2_gen,
++        tsp_tex_v2_del,
++        (long)tsp_tex_v2_gen - (long)tsp_tex_v2_del,
++        tsp_tex_v2_live_bytes,
++        reused);
++}
++
++void tsp_native_texture_deleted_v2(GLuint id, const char* owner)
++{
++    if (!tsp_texture_diag_on() || !id)
++        return;
++
++    tsp_native_tex_v2_t* r = tsp_tex_v2_slot(id, 0);
++    unsigned long long released = 0;
++    int tracked = 0;
++
++    if (r) {
++        released = r->total_bytes;
++        tracked = 1;
++
++        if (tsp_tex_v2_live_bytes >= released)
++            tsp_tex_v2_live_bytes -= released;
++        else
++            tsp_tex_v2_live_bytes = 0;
++
++        memset(r, 0, sizeof(*r));
++    }
++
++    ++tsp_tex_v2_del;
++
++    tsp_texture_diag_log(
++        "DEL_TEX id=%u owner=%s tracked=%d released=%llu gen=%lu del=%lu live=%ld live_bytes=%llu",
++        id,
++        owner ? owner : "?",
++        tracked,
++        released,
++        tsp_tex_v2_gen,
++        tsp_tex_v2_del,
++        (long)tsp_tex_v2_gen - (long)tsp_tex_v2_del,
++        tsp_tex_v2_live_bytes);
++}
++
++void tsp_native_texture_storage_v2(
++    GLuint id,
++    GLint level,
++    GLsizei width,
++    GLsizei height,
++    GLenum internalformat,
++    GLenum format,
++    GLenum type,
++    unsigned long long explicit_bytes,
++    const char* owner)
++{
++    if (!tsp_texture_diag_on())
++        return;
++
++    unsigned long long bytes = explicit_bytes
++        ? explicit_bytes
++        : tsp_texture_estimate(width, height, format, type);
++
++    tsp_native_tex_v2_t* r = tsp_tex_v2_slot(id, id != 0);
++    unsigned long long old = 0;
++
++    if (r && level >= 0 && level < 16) {
++        old = r->level_bytes[level];
++
++        if (r->total_bytes >= old)
++            r->total_bytes -= old;
++        else
++            r->total_bytes = 0;
++
++        if (tsp_tex_v2_live_bytes >= old)
++            tsp_tex_v2_live_bytes -= old;
++        else
++            tsp_tex_v2_live_bytes = 0;
++
++        r->level_bytes[level] = bytes;
++        r->total_bytes += bytes;
++        tsp_tex_v2_live_bytes += bytes;
++    }
++
++    ++tsp_tex_v2_storage;
++
++    tsp_texture_diag_log(
++        "TEX_STORAGE id=%u owner=%s level=%d size=%dx%d ifmt=0x%x fmt=0x%x type=0x%x bytes=%llu old=%llu realloc=%d tex_bytes=%llu live_bytes=%llu calls=%lu",
++        id,
++        owner ? owner : "?",
++        level,
++        width,
++        height,
++        internalformat,
++        format,
++        type,
++        bytes,
++        old,
++        old != 0,
++        r ? r->total_bytes : 0,
++        tsp_tex_v2_live_bytes,
++        tsp_tex_v2_storage);
++}
++
++/* Wrap the exact GLES allocation boundary.  The extra glGetIntegerv exists
++ * only while diagnostics are armed; with them off this is a straight-through
++ * call to the driver.
++ */
++void tsp_native_gles_teximage2d_v2(
++    GLenum target,
++    GLint level,
++    GLint internalformat,
++    GLsizei width,
++    GLsizei height,
++    GLint border,
++    GLenum format,
++    GLenum type,
++    const GLvoid* data)
++{
++    GLuint id = 0;
++
++    LOAD_GLES(glTexImage2D);
++
++    if (tsp_texture_diag_on() && target == GL_TEXTURE_2D) {
++        LOAD_GLES(glGetIntegerv);
++        if (gles_glGetIntegerv) {
++            GLint bound = 0;
++            gles_glGetIntegerv(GL_TEXTURE_BINDING_2D, &bound);
++            if (bound > 0)
++                id = (GLuint)bound;
++        }
++    }
++
++    gles_glTexImage2D(
++        target,
++        level,
++        internalformat,
++        width,
++        height,
++        border,
++        format,
++        type,
++        data);
++
++    if (tsp_texture_diag_on()) {
++        tsp_native_texture_storage_v2(
++            id,
++            level,
++            width,
++            height,
++            internalformat,
++            format,
++            type,
++            0,
++            "glTexImage2D");
++    }
++}
++
++void tsp_native_gles_compressed_teximage2d_v2(
++    GLenum target,
++    GLint level,
++    GLenum internalformat,
++    GLsizei width,
++    GLsizei height,
++    GLint border,
++    GLsizei imageSize,
++    const GLvoid* data)
++{
++    GLuint id = 0;
++
++    LOAD_GLES(glCompressedTexImage2D);
++
++    if (tsp_texture_diag_on() && target == GL_TEXTURE_2D) {
++        LOAD_GLES(glGetIntegerv);
++        if (gles_glGetIntegerv) {
++            GLint bound = 0;
++            gles_glGetIntegerv(GL_TEXTURE_BINDING_2D, &bound);
++            if (bound > 0)
++                id = (GLuint)bound;
++        }
++    }
++
++    gles_glCompressedTexImage2D(
++        target,
++        level,
++        internalformat,
++        width,
++        height,
++        border,
++        imageSize,
++        data);
++
++    if (tsp_texture_diag_on()) {
++        tsp_native_texture_storage_v2(
++            id,
++            level,
++            width,
++            height,
++            internalformat,
++            internalformat,
++            GL_UNSIGNED_BYTE,
++            (unsigned long long)((imageSize > 0) ? imageSize : 0),
++            "glCompressedTexImage2D");
++    }
++}
++
++/* Keep V1 FBO/RB diagnostics useful, but feed the new native-texture tracker
++ * from the same exact object boundary.
++ */
++void tsp_native_life_texture_generated(GLuint id)
++{
++    if (id && tsp_native_life_on()) {
++        ++tsp_native_tex_gen;
++        tsp_native_log(
++            "GEN_TEX gl=%u gen=%lu del=%lu live=%ld",
++            id,
++            tsp_native_tex_gen,
++            tsp_native_tex_del,
++            (long)tsp_native_tex_gen - (long)tsp_native_tex_del);
++    }
++
++    tsp_native_texture_generated_v2(id, "native-gen");
++}
++
++void tsp_native_life_texture_deleted(GLuint id)
++{
++    if (id && tsp_native_life_on()) {
++        ++tsp_native_tex_del;
++        tsp_native_log(
++            "DEL_TEX gl=%u gen=%lu del=%lu live=%ld",
++            id,
++            tsp_native_tex_gen,
++            tsp_native_tex_del,
++            (long)tsp_native_tex_gen - (long)tsp_native_tex_del);
++    }
++
++    tsp_native_texture_deleted_v2(id, "native-delete");
++}
++
++/* TSP_PVR_RB_LIFETIME_FIX_V1
++ * gl4es proxy depth/stencil renderbuffers belonged to a texture. Old
++ * glDeleteFramebuffers() zeroed renderdepth/renderstencil before deleting the
++ * native RB, making the later texture destructor unable to free it.
++ */
++static void tsp_pvr_delete_proxy_rb(GLuint*id,const char*owner){
++    if(!id||!*id)return;GLuint doomed=*id;*id=0;tsp_native_rb_deleted(doomed,owner);gl4es_glDeleteRenderbuffers(1,&doomed);
++}
++/* ---------------------------------------------------------------------- */
++
+ /* TSP_BINDSYNC_20260816 */
+ static int tsp_bindfb_sync(void);
+ static int tsp_bindfb_sync(void) {
+@@ -227,11 +728,200 @@ void tsp_tex_bind_note(unsigned int t) {
+     nlog++;
+     tsp_fbo_log("SAMPLE0 tex=%u", t);
+ }
++/* TSP_MAP_RTT_READBACK_V1 -------------------------------------------------
++ * Dump a few finished map RTTs straight from the native PowerVR framebuffer
++ * before gl4es unbinds it.  This answers a new question that attachment/status
++ * logging cannot: is the map already corrupt in GPU render-target memory?
++ *
++ * Limited to four 256x256 local-map dumps and three 954x864 world-map dumps.
++ * Completely inert unless LIBGL_TSP_MAP_READBACK_DIR names a directory.
++ */
++const char* volatile tspMapRttReadbackV1Tag = "TSP_MAP_RTT_READBACK_V1";
++static int tsp_map_readback_on(void)
++{
++    static int checked = 0;
++    static int on = 0;
++    if (!checked) {
++        const char* p = getenv("LIBGL_TSP_MAP_READBACK_DIR");
++        on = (p && p[0]);
++        checked = 1;
++    }
++    return on;
++}
++
++static unsigned long long tsp_fnv1a64(
++    const unsigned char* p,
++    size_t n)
++{
++    unsigned long long h = 1469598103934665603ULL;
++    for (size_t i = 0; i < n; ++i) {
++        h ^= (unsigned long long)p[i];
++        h *= 1099511628211ULL;
++    }
++    return h;
++}
++
++static void tsp_map_readback_dump(void)
++{
++    static unsigned int local_n = 0;
++    static unsigned int world_n = 0;
++
++    if (!tsp_map_readback_on())
++        return;
++
++    if (!glstate || !glstate->fbo.fbo_draw)
++        return;
++
++    glframebuffer_t* fb = glstate->fbo.fbo_draw;
++
++    if (!fb || fb->id == 0)
++        return;
++
++    const int w = fb->width;
++    const int h = fb->height;
++    const char* kind = NULL;
++    unsigned int* counter = NULL;
++    unsigned int limit = 0;
++
++    if (w == 256 && h == 256) {
++        kind = "local";
++        counter = &local_n;
++        limit = 4;
++    } else if (w == 954 && h == 864) {
++        kind = "world";
++        counter = &world_n;
++        limit = 3;
++    } else {
++        return;
++    }
++
++    if (*counter >= limit)
++        return;
++
++    const char* dir = getenv("LIBGL_TSP_MAP_READBACK_DIR");
++    if (!dir || !dir[0])
++        return;
++
++    size_t rgba_bytes = (size_t)w * (size_t)h * 4U;
++    unsigned char* rgba = malloc(rgba_bytes);
++
++    if (!rgba) {
++        tsp_texture_diag_log(
++            "MAP_READBACK_ERROR kind=%s fb=%u reason=malloc bytes=%zu",
++            kind,
++            fb->id,
++            rgba_bytes);
++        return;
++    }
++
++    LOAD_GLES(glFinish);
++    LOAD_GLES(glReadPixels);
++
++    if (gles_glFinish)
++        gles_glFinish();
++
++    gles_glReadPixels(
++        0,
++        0,
++        w,
++        h,
++        GL_RGBA,
++        GL_UNSIGNED_BYTE,
++        rgba);
++
++    unsigned long long hash = tsp_fnv1a64(rgba, rgba_bytes);
++    GLuint tex = tsp_fbtrack_get(fb->id);
++    unsigned int index = ++(*counter);
++
++    char path[1024];
++    snprintf(
++        path,
++        sizeof(path),
++        "%s/%s-%02u-fb%u-tex%u-%dx%d.ppm",
++        dir,
++        kind,
++        index,
++        fb->id,
++        tex,
++        w,
++        h);
++
++    FILE* out = fopen(path, "wb");
++
++    if (!out) {
++        tsp_texture_diag_log(
++            "MAP_READBACK_ERROR kind=%s fb=%u tex=%u reason=fopen path=%s hash=%016llx",
++            kind,
++            fb->id,
++            tex,
++            path,
++            hash);
++        free(rgba);
++        return;
++    }
++
++    fprintf(out, "P6\n%d %d\n255\n", w, h);
++
++    unsigned char* rgb = malloc((size_t)w * 3U);
++
++    if (!rgb) {
++        fclose(out);
++        free(rgba);
++        tsp_texture_diag_log(
++            "MAP_READBACK_ERROR kind=%s fb=%u tex=%u reason=rowmalloc",
++            kind,
++            fb->id,
++            tex);
++        return;
++    }
++
++    /* GL's framebuffer origin is bottom-left; write top row first for PPM. */
++    for (int y = h - 1; y >= 0; --y) {
++        const unsigned char* src
++            = rgba + ((size_t)y * (size_t)w * 4U);
++
++        for (int x = 0; x < w; ++x) {
++            rgb[x * 3 + 0] = src[x * 4 + 0];
++            rgb[x * 3 + 1] = src[x * 4 + 1];
++            rgb[x * 3 + 2] = src[x * 4 + 2];
++        }
++
++        fwrite(rgb, 1, (size_t)w * 3U, out);
++    }
++
++    free(rgb);
++    fclose(out);
++
++    size_t center
++        = (((size_t)(h / 2) * (size_t)w)
++            + (size_t)(w / 2)) * 4U;
++
++    tsp_texture_diag_log(
++        "MAP_READBACK kind=%s index=%u fb=%u tex=%u size=%dx%d hash=%016llx center=%u,%u,%u,%u path=%s",
++        kind,
++        index,
++        fb->id,
++        tex,
++        w,
++        h,
++        hash,
++        rgba[center + 0],
++        rgba[center + 1],
++        rgba[center + 2],
++        rgba[center + 3],
++        path);
++
++    free(rgba);
++}
++
+ static void tsp_fbo_snap(void) {
+     static int nlog = 0;
+     if (!tsp_snap_on()) return;
+     if (!glstate || !glstate->fbo.fbo_draw) return;
+     if (glstate->fbo.fbo_draw->id == 0) return;
++
++    tsp_map_readback_dump();
++
+     if (nlog >= 400) return;
+     nlog++;
+     tsp_fbo_log("PASS fb=%u %dx%d draws=%lu clears=%lu cmask=0x%x",
+@@ -330,6 +1020,7 @@ void APIENTRY_GL4ES gl4es_glGenFramebuffers(GLsizei n, GLuint *ids) {
+     if(n-m) {
+         errorGL();
+         gles_glGenFramebuffers(n-m, ids+m);
++        for (int tsp_i=m; tsp_i<n; ++tsp_i) tsp_native_fbo_generated(ids[tsp_i]);
+     }
+     // track the framebuffers...
+     int ret;
+@@ -372,7 +1063,7 @@ void APIENTRY_GL4ES gl4es_glDeleteFramebuffers(GLsizei n, GLuint *framebuffers)
+                             if(tex) {
+                                 tex->binded_fbo = 0;
+                                 tex->binded_attachment = 0;
+-                                tex->renderdepth = 0;
++                                tsp_pvr_delete_proxy_rb(&tex->renderdepth, "fbo-depth-proxy");
+                             }
+                         }
+                         if(fb->stencil && fb->t_stencil!=GL_RENDERBUFFER) {
+@@ -380,7 +1071,7 @@ void APIENTRY_GL4ES gl4es_glDeleteFramebuffers(GLsizei n, GLuint *framebuffers)
+                             if(tex) {
+                                 tex->binded_fbo = 0;
+                                 tex->binded_attachment = 0;
+-                                tex->renderstencil = 0;
++                                tsp_pvr_delete_proxy_rb(&tex->renderstencil, "fbo-stencil-proxy");
+                             }
+                         }
+                         if (glstate->fbo.current_fb == fb) {
+@@ -415,6 +1106,7 @@ void APIENTRY_GL4ES gl4es_glDeleteFramebuffers(GLsizei n, GLuint *framebuffers)
+     } else {
+         LOAD_GLES2_OR_OES(glDeleteFramebuffers);
+         errorGL();
++        for (int tsp_i=0; tsp_i<n; ++tsp_i) tsp_native_fbo_deleted(framebuffers[tsp_i]);
+         gles_glDeleteFramebuffers(n, framebuffers);
+     }
+ }
+@@ -734,7 +1426,7 @@ void APIENTRY_GL4ES gl4es_glFramebufferTexture2D(GLenum target, GLenum attachmen
+                 gltexture_t *bound = glstate->texture.bound[0/*glstate->texture.active*/][ENABLED_TEX2D];
+                 GLuint oldtex = bound->glname;
+                 if (oldtex!=tex->glname) gles_glBindTexture(GL_TEXTURE_2D, tex->glname);
+-                gles_glTexImage2D(GL_TEXTURE_2D, 0, tex->format, tex->nwidth, tex->nheight, 0, tex->format, tex->type, NULL);
++                tsp_native_gles_teximage2d_v2(GL_TEXTURE_2D, 0, tex->format, tex->nwidth, tex->nheight, 0, tex->format, tex->type, NULL);
+                 if (oldtex!=tex->glname) gles_glBindTexture(GL_TEXTURE_2D, oldtex);
+                 if(oldactive) gles_glActiveTexture(GL_TEXTURE0+oldactive);
+             }
+@@ -762,7 +1454,7 @@ void APIENTRY_GL4ES gl4es_glFramebufferTexture2D(GLenum target, GLenum attachmen
+                 gltexture_t *bound = glstate->texture.bound[0/*glstate->texture.active*/][ENABLED_TEX2D];
+                 GLuint oldtex = bound->glname;
+                 if (oldtex!=tex->glname) gles_glBindTexture(GL_TEXTURE_2D, tex->glname);
+-                gles_glTexImage2D(GL_TEXTURE_2D, 0, tex->format, tex->nwidth, tex->nheight, 0, tex->format, tex->type, NULL);
++                tsp_native_gles_teximage2d_v2(GL_TEXTURE_2D, 0, tex->format, tex->nwidth, tex->nheight, 0, tex->format, tex->type, NULL);
+                 if (oldtex!=tex->glname) gles_glBindTexture(GL_TEXTURE_2D, oldtex);
+                 if(oldactive) gles_glActiveTexture(GL_TEXTURE0+oldactive);
+             }
+@@ -776,7 +1468,7 @@ void APIENTRY_GL4ES gl4es_glFramebufferTexture2D(GLenum target, GLenum attachmen
+                 gltexture_t *bound = glstate->texture.bound[glstate->texture.active][ENABLED_TEX2D];
+                 GLuint oldtex = bound->glname;
+                 if (oldtex!=tex->glname) gles_glBindTexture(GL_TEXTURE_2D, tex->glname);
+-                gles_glTexImage2D(GL_TEXTURE_2D, 0, tex->format, tex->nwidth, tex->nheight, 0, tex->format, tex->type, NULL);
++                tsp_native_gles_teximage2d_v2(GL_TEXTURE_2D, 0, tex->format, tex->nwidth, tex->nheight, 0, tex->format, tex->type, NULL);
+                 if (oldtex!=tex->glname) gles_glBindTexture(GL_TEXTURE_2D, oldtex);
+             }*/
+ 
+@@ -796,6 +1488,12 @@ void APIENTRY_GL4ES gl4es_glFramebufferTexture2D(GLenum target, GLenum attachmen
+         gltexture_t* old = gl4es_getTexture(old_attachment_type, old_attachment);
+         if(old) {
+             DBG(printf("Detach Texture %d from FBO %d as Attachement %s\n", old->glname, old->binded_fbo, PrintEnum(old->binded_attachment));)
++            /* TSP_TEXLIFE_V2 */
++            tsp_texlife_attach(
++                "DETACH",
++                old,
++                old->binded_fbo,
++                old->binded_attachment);
+             old->binded_fbo = 0;
+             old->binded_attachment = 0;
+         } else {
+@@ -807,6 +1505,8 @@ void APIENTRY_GL4ES gl4es_glFramebufferTexture2D(GLenum target, GLenum attachmen
+         DBG(printf("Attach Texture %d to FBO %d as Attachement %s\n", tex->glname, fb->id, PrintEnum(attachment));)
+         tex->binded_fbo = fb->id;
+         tex->binded_attachment = attachment;
++        /* TSP_TEXLIFE_V2 */
++        tsp_texlife_attach("ATTACH", tex, fb->id, attachment);
+     }
+ 
+     if (0) /* TSP_FBO_ALWAYS_REATTACH_20260824 - see tag below */
+@@ -856,7 +1556,7 @@ void APIENTRY_GL4ES gl4es_glFramebufferTexture2D(GLenum target, GLenum attachmen
+                 gles_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+                 gles_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+                 gles_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+-                gles_glTexImage2D(GL_TEXTURE_2D, 0, tex->format, tex->nwidth, tex->nheight, 0, tex->format, tex->type, NULL);
++                tsp_native_gles_teximage2d_v2(GL_TEXTURE_2D, 0, tex->format, tex->nwidth, tex->nheight, 0, tex->format, tex->type, NULL);
+                 if (oldtex!=tex->glname) gles_glBindTexture(GL_TEXTURE_2D, oldtex);
+                 if(oldactive) gles_glActiveTexture(GL_TEXTURE0+oldactive);
+             }
+@@ -921,7 +1621,7 @@ void APIENTRY_GL4ES gl4es_glFramebufferTexture2D(GLenum target, GLenum attachmen
+                     gles_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+                     gles_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+                     gles_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+-                    gles_glTexImage2D(GL_TEXTURE_2D, 0, tex->format, tex->nwidth, tex->nheight, 0, tex->format, tex->type, NULL);
++                    tsp_native_gles_teximage2d_v2(GL_TEXTURE_2D, 0, tex->format, tex->nwidth, tex->nheight, 0, tex->format, tex->type, NULL);
+                     if (oldtex!=tex->glname) gles_glBindTexture(GL_TEXTURE_2D, oldtex);
+                     if(oldactive) gles_glActiveTexture(GL_TEXTURE0+oldactive);
+                 }
+@@ -961,7 +1661,7 @@ void APIENTRY_GL4ES gl4es_glFramebufferTexture2D(GLenum target, GLenum attachmen
+                     gles_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+                     gles_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+                     gles_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+-                    gles_glTexImage2D(GL_TEXTURE_2D, 0, tex->format, tex->nwidth, tex->nheight, 0, tex->format, tex->type, NULL);
++                    tsp_native_gles_teximage2d_v2(GL_TEXTURE_2D, 0, tex->format, tex->nwidth, tex->nheight, 0, tex->format, tex->type, NULL);
+                     if (oldtex!=tex->glname) gles_glBindTexture(GL_TEXTURE_2D, oldtex);
+                     if(oldactive) gles_glActiveTexture(GL_TEXTURE0+oldactive);
+                 }
+@@ -995,7 +1695,7 @@ void APIENTRY_GL4ES gl4es_glFramebufferTexture2D(GLenum target, GLenum attachmen
+                     gles_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+                     gles_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+                     gles_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+-                    gles_glTexImage2D(GL_TEXTURE_2D, 0, tex->format, tex->nwidth, tex->nheight, 0, tex->format, tex->type, NULL);
++                    tsp_native_gles_teximage2d_v2(GL_TEXTURE_2D, 0, tex->format, tex->nwidth, tex->nheight, 0, tex->format, tex->type, NULL);
+                     if (oldtex!=tex->glname) gles_glBindTexture(GL_TEXTURE_2D, oldtex);
+                     if(oldactive) gles_glActiveTexture(GL_TEXTURE0+oldactive);
+                 }
+@@ -1051,7 +1751,7 @@ void APIENTRY_GL4ES gl4es_glFramebufferTexture2D(GLenum target, GLenum attachmen
+                 gltexture_t *bound = glstate->texture.bound[glstate->texture.active][ENABLED_TEX2D];
+                 GLuint oldtex = bound->glname;
+                 if (oldtex!=scrap_tex) gles_glBindTexture(GL_TEXTURE_2D, scrap_tex);
+-                gles_glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, scrap_width, scrap_height, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
++                tsp_native_gles_teximage2d_v2(GL_TEXTURE_2D, 0, GL_RGBA, scrap_width, scrap_height, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+                 if (oldtex!=scrap_tex) gles_glBindTexture(GL_TEXTURE_2D, oldtex);
+         }
+         texture = scrap_tex;
+@@ -1116,6 +1816,7 @@ void APIENTRY_GL4ES gl4es_glGenRenderbuffers(GLsizei n, GLuint *renderbuffers) {
+     LOAD_GLES2_OR_OES(glGenRenderbuffers);
+     errorGL();
+     gles_glGenRenderbuffers(n, renderbuffers);
++    for (int tsp_i=0; tsp_i<n; ++tsp_i) tsp_native_rb_generated(renderbuffers[tsp_i], "glGenRenderbuffers");
+     // track the renderbuffers...
+     int ret;
+     khint_t k;
+@@ -1248,8 +1949,10 @@ void APIENTRY_GL4ES gl4es_glDeleteRenderbuffers(GLsizei n, GLuint *renderbuffers
+                         rend = kh_value(glstate->fbo.renderbufferlist, k);
+                         if(glstate->fbo.current_rb == rend)
+                             glstate->fbo.current_rb = glstate->fbo.default_rb;
+-                        if(rend->secondarybuffer)
++                        if(rend->secondarybuffer) {
++                            tsp_native_rb_deleted(rend->secondarybuffer, "secondarybuffer-delete");
+                             gles_glDeleteRenderbuffers(1, &rend->secondarybuffer);
++                        }
+                         if(rend->secondarytexture)
+                             gl4es_glDeleteTextures(1, &rend->secondarytexture);
+                         free(rend);
+@@ -1260,6 +1963,7 @@ void APIENTRY_GL4ES gl4es_glDeleteRenderbuffers(GLsizei n, GLuint *renderbuffers
+         }
+ 
+     errorGL();
++    for (int tsp_i=0; tsp_i<n; ++tsp_i) tsp_native_rb_deleted(renderbuffers[tsp_i], "glDeleteRenderbuffers");
+     gles_glDeleteRenderbuffers(n, renderbuffers);
+ }
+ 
+@@ -1293,6 +1997,7 @@ void APIENTRY_GL4ES gl4es_glRenderbufferStorage(GLenum target, GLenum internalfo
+         // create a stencil buffer if needed
+         if(!rend->secondarybuffer) {
+             gles_glGenRenderbuffers(1, &rend->secondarybuffer);
++            tsp_native_rb_generated(rend->secondarybuffer, "secondarybuffer-create");
+         }
+         use_secondarybuffer = 1;
+     }
+@@ -1320,9 +2025,11 @@ void APIENTRY_GL4ES gl4es_glRenderbufferStorage(GLenum target, GLenum internalfo
+             GLuint current_rb = glstate->fbo.current_rb->renderbuffer;
+             gles_glBindRenderbuffer(GL_RENDERBUFFER, rend->secondarybuffer);
+             gles_glRenderbufferStorage(target, GL_STENCIL_INDEX8, width, height);
++            tsp_native_rb_storage(rend->secondarybuffer, GL_STENCIL_INDEX8, width, height, "secondarybuffer-storage");
+             gles_glBindRenderbuffer(GL_RENDERBUFFER, current_rb);
+         } else {
+             LOAD_GLES2_OR_OES(glDeleteRenderbuffers);
++            tsp_native_rb_deleted(rend->secondarybuffer, "secondarybuffer-mode-change");
+             gles_glDeleteRenderbuffers(1, &rend->secondarybuffer);
+             rend->secondarybuffer = 0;
+         }
+@@ -1341,7 +2048,7 @@ void APIENTRY_GL4ES gl4es_glRenderbufferStorage(GLenum target, GLenum internalfo
+         if (oldtex!=rend->secondarytexture) gles_glBindTexture(GL_TEXTURE_2D, rend->secondarytexture);
+         tex->nwidth = tex->width = width;
+         tex->nheight = tex->height = height;
+-        gles_glTexImage2D(GL_TEXTURE_2D, 0, tex->format, tex->nwidth, tex->nheight, 0, tex->format, tex->type, NULL);
++        tsp_native_gles_teximage2d_v2(GL_TEXTURE_2D, 0, tex->format, tex->nwidth, tex->nheight, 0, tex->format, tex->type, NULL);
+         if (oldtex!=tex->glname) gles_glBindTexture(GL_TEXTURE_2D, oldtex);
+         if(oldactive) gles_glActiveTexture(GL_TEXTURE0+oldactive);
+     }
+@@ -1352,6 +2059,7 @@ void APIENTRY_GL4ES gl4es_glRenderbufferStorage(GLenum target, GLenum internalfo
+     rend->actual = internalformat;
+ 
+     gles_glRenderbufferStorage(target, internalformat, width, height);
++    tsp_native_rb_storage(rend->renderbuffer, internalformat, width, height, "primary-storage");
+     DBG(CheckGLError(1);)
+ }
+ 
+@@ -1589,6 +2297,7 @@ void createMainFBO(int width, int height) {
+     // create the texture
+     if(createIt)
+         gles_glGenTextures(1, &glstate->fbo.mainfbo_tex);
++        tsp_native_life_texture_generated(glstate->fbo.mainfbo_tex);
+     gles_glBindTexture(GL_TEXTURE_2D, glstate->fbo.mainfbo_tex);
+     if(createIt) {
+         gles_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+@@ -1596,7 +2305,7 @@ void createMainFBO(int width, int height) {
+         gles_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+         gles_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+     }
+-    gles_glTexImage2D(GL_TEXTURE_2D, 0, globals4es.fbo_noalpha?GL_RGB:GL_RGBA, width, height,
++    tsp_native_gles_teximage2d_v2(GL_TEXTURE_2D, 0, globals4es.fbo_noalpha?GL_RGB:GL_RGBA, width, height,
+                     0, globals4es.fbo_noalpha?GL_RGB:GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+     gles_glBindTexture(GL_TEXTURE_2D, 0);
+     // create the render buffers
+@@ -1805,6 +2514,7 @@ void deleteMainFBO(void *state) {
+         glstate->fbo.mainfbo_ste = 0;
+     }
+     if (glstate->fbo.mainfbo_tex) {
++        tsp_native_life_texture_deleted(glstate->fbo.mainfbo_tex);
+         gles_glDeleteTextures(1, &glstate->fbo.mainfbo_tex);
+         glstate->fbo.mainfbo_tex = 0;
+     }
+diff --git a/src/gl/framebuffers.h b/src/gl/framebuffers.h
+index a917658..c12de90 100644
+--- a/src/gl/framebuffers.h
++++ b/src/gl/framebuffers.h
+@@ -57,4 +57,22 @@ void gl4es_setCurrentFBO();
+ void gl4es_saveCurrentFBO();
+ void gl4es_restoreCurrentFBO();
+ 
++
++/* TSP_NATIVE_TEXTURE_DIAG_V2
++ * Measurement-only native texture/storage helpers.  They are dormant unless
++ * LIBGL_TSP_TEXTURE_DIAG=1, and are used by texture.c/texture_params.c and
++ * context teardown paths to account for the exact GLES object lifecycle.
++ */
++void tsp_native_texture_generated_v2(GLuint id, const char* owner);
++void tsp_native_texture_deleted_v2(GLuint id, const char* owner);
++void tsp_native_texture_storage_v2(GLuint id, GLint level, GLsizei width, GLsizei height,
++                                   GLenum internalformat, GLenum format, GLenum type,
++                                   unsigned long long explicit_bytes, const char* owner);
++void tsp_native_gles_teximage2d_v2(GLenum target, GLint level, GLint internalformat,
++                                   GLsizei width, GLsizei height, GLint border,
++                                   GLenum format, GLenum type, const GLvoid* data);
++void tsp_native_gles_compressed_teximage2d_v2(GLenum target, GLint level, GLenum internalformat,
++                                              GLsizei width, GLsizei height, GLint border,
++                                              GLsizei imageSize, const GLvoid* data);
++
+ #endif // _GL4ES_FRAMEBUFFERS_H_
+diff --git a/src/gl/glstate.c b/src/gl/glstate.c
+index b0e87bf..b6ae684 100644
+--- a/src/gl/glstate.c
++++ b/src/gl/glstate.c
+@@ -46,8 +46,10 @@ static void free_texture(gltexture_t *tex)
+     LOAD_GLES(glDeleteTextures);
+     if(!tex || !gles_glDeleteTextures)
+         return;
+-    if(tex->glname)
++    if(tex->glname) {
++        tsp_native_life_texture_deleted(tex->glname);
+         gles_glDeleteTextures(1, &tex->glname);
++    }
+     if(tex->data)
+         free(tex->data);
+     // renderbuffer linked to this texture will be freed by the free_renderbuffer function.
+diff --git a/src/gl/program.c b/src/gl/program.c
+index 2eaeb02..b5a6302 100644
+--- a/src/gl/program.c
++++ b/src/gl/program.c
+@@ -1,3 +1,13 @@
++#include <stdio.h>
++#include <stdlib.h>
++/* TSP_QUIETLOG_V1 - cache logging is opt-in via LIBGL_TSP_LOG=1, silent by default */
++static int tsp_log_on(void)
++{
++    static int tsp_v = -1;
++    if (tsp_v < 0) { const char* tsp_e = getenv("LIBGL_TSP_LOG"); tsp_v = (tsp_e && tsp_e[0] == '1') ? 1 : 0; }
++    return tsp_v;
++}
++#define TSP_LOGP(...) do { if (tsp_log_on()) printf(__VA_ARGS__); } while (0)
+ #include "program.h"
+ 
+ #include <stdlib.h>
+@@ -548,14 +558,24 @@ static void fill_program(program_t *glprogram)
+     int uniform_cache = 0;
+     GLint size = 0;
+     GLenum type = 0;
+-    GLchar *name = (char*)malloc(maxsize);
++    /* TSP_FILLPROG_GUARD_V1: after glProgramBinary many drivers report
++       GL_ACTIVE_*_MAX_LENGTH as 0. malloc(0) is then overrun by glGetActive*,
++       corrupting the heap - the signal 11 the shader binary cache was shelved
++       for. Guard the size, the allocation and the terminator. */
++    if (getenv("TSP_FILLPROG_DEBUG")) printf("TSP_FILLPROG n=%d raw_maxsize=%d\n", n, maxsize);
++    if (maxsize < 2) maxsize = 256;
++    GLchar *name = (char*)malloc(maxsize + 1);
++    if (!name) return;
++    name[0] = 0;
+     int tu_idx = 0;
+     for (int i=0; i<n; i++) {
+         gles_glGetActiveUniform(glprogram->id, i, maxsize, NULL, &size, &type, name);
++        name[maxsize] = 0; /* TSP_FILLPROG_GUARD_V1 */
+         DBG(e2=gles_glGetError();)
+         DBG(if(e2==GL_NO_ERROR))
+         {
+             // remove any ending "[]" that could be present
++            if(name[0]==0) continue; /* TSP_FILLPROG_GUARD_V1 */
+             if(name[strlen(name)-1]==']' && strrchr(name, '[')) (*strrchr(name, '['))='\0';
+             GLint id = gles_glGetUniformLocation(glprogram->id, name);
+             if(id!=-1) {
+@@ -616,12 +636,17 @@ static void fill_program(program_t *glprogram)
+     // Grab all Attrib
+     gles_glGetProgramiv(glprogram->id, GL_ACTIVE_ATTRIBUTES, &n);
+     gles_glGetProgramiv(glprogram->id, GL_ACTIVE_ATTRIBUTE_MAX_LENGTH, &maxsize);
+-    name = (char*)malloc(maxsize);
++    /* TSP_FILLPROG_GUARD_V1 */
++    if (maxsize < 2) maxsize = 256;
++    name = (char*)malloc(maxsize + 1);
++    if (!name) return;
++    name[0] = 0;
+     for (int i=0; i<n; i++) {
+         DBG(e2=gles_glGetError();)
+         DBG(if(e2==GL_NO_ERROR))
+         {
+             gles_glGetActiveAttrib(glprogram->id, i, maxsize, NULL, &size, &type, name);
++            name[maxsize] = 0; /* TSP_FILLPROG_GUARD_V1 */
+             GLint id = gles_glGetAttribLocation(glprogram->id, name);
+             if(id!=-1) {
+                 attribloc_t *glattribloc = NULL;
+@@ -727,6 +752,120 @@ void APIENTRY_GL4ES gl4es_glProgramBinary(GLuint program, GLenum binaryFormat, c
+         errorShim(GL_INVALID_OPERATION);
+ }
+ 
++
++/* TSP_PRGCACHE_V1 -----------------------------------------------------------
++   Per-program binary cache, keyed on the CONVERTED GLSL of the attached vertex
++   and fragment shaders. It hooks the single gles_glLinkProgram call inside
++   gl4es_glLinkProgram, so every piece of gl4es bookkeeping around it -
++   accumShaderNeeds, the default vert/frag creation, isShaderCompatible,
++   redoShader, the hasBuiltinAttrib -> glBindAttribLocation pass, fill_program -
++   runs exactly as before. That is the difference from the old LD_PRELOAD SCACHE
++   shim, which returned from its glLinkProgram interposer without ever calling
++   gl4es_glLinkProgram, skipping all of it, and crashed in glDrawElements.
++   Fails closed: a binary the driver refuses is deleted and a real link runs. */
++#include <stdint.h>
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#include <time.h>
++#include <sys/stat.h>
++#include <unistd.h>
++
++static int tsp_prgcache_on(void) {
++    static int v = -1;
++    if (v < 0) { const char* e = getenv("TSP_PRGCACHE"); v = (e && e[0] == '0') ? 0 : 1; }
++    return v;
++}
++static const char* tsp_prgcache_dir(void) {
++    static const char* d = NULL;
++    if (!d) { const char* e = getenv("TSP_PRGCACHE_DIR"); d = (e && e[0]) ? e : "/mnt/UDISK/tsp_prgcache"; }
++    return d;
++}
++static double tsp_prgcache_ms(void) {
++    struct timespec ts;
++    clock_gettime(CLOCK_MONOTONIC, &ts);
++    return ts.tv_sec * 1000.0 + ts.tv_nsec / 1000000.0;
++}
++static uint64_t tsp_prgcache_fnv(const char* s, uint64_t h) {
++    if (!s) return h;
++    while (*s) { h ^= (unsigned char)(*s++); h *= 1099511628211ULL; }
++    return h;
++}
++static void tsp_prgcache_path(char* out, int n, uint64_t key) {
++    snprintf(out, n, "%s/%016llx.prgbin", tsp_prgcache_dir(), (unsigned long long)key);
++}
++static int tsp_prgcache_load(GLuint id, uint64_t key) {
++    if (hardext.prgbin_n == 0) return 0;
++    char path[512];
++    tsp_prgcache_path(path, sizeof(path), key);
++    FILE* f = fopen(path, "rb");
++    if (!f) return 0;
++    uint32_t magic = 0, fmt = 0, len = 0;
++    if (fread(&magic, 4, 1, f) != 1 || magic != 0x54535031u
++        || fread(&fmt, 4, 1, f) != 1 || fread(&len, 4, 1, f) != 1
++        || len == 0 || len > (32u << 20)) { fclose(f); return 0; }
++    void* buf = malloc(len);
++    if (!buf) { fclose(f); return 0; }
++    size_t got = fread(buf, 1, len, f);
++    fclose(f);
++    if (got != (size_t)len) { free(buf); return 0; }
++    LOAD_GLES_OES(glProgramBinary);
++    LOAD_GLES2(glGetProgramiv);
++    GLint linked = 0;
++    double t0 = tsp_prgcache_ms();
++    gles_glProgramBinary(id, (GLenum)fmt, buf, (GLsizei)len);
++    gles_glGetProgramiv(id, GL_LINK_STATUS, &linked);
++    free(buf);
++    if (!linked) {
++        remove(path);
++        TSP_LOGP("LIBGL: TSP_PRGCACHE reject key=%016llx (deleted, linking instead)\n",
++               (unsigned long long)key);
++        return 0;
++    }
++    TSP_LOGP("LIBGL: TSP_PRGCACHE hit key=%016llx bytes=%u ms=%.1f\n",
++           (unsigned long long)key, (unsigned)len, tsp_prgcache_ms() - t0);
++    return 1;
++}
++static void tsp_prgcache_save(GLuint id, uint64_t key, double link_ms) {
++    if (hardext.prgbin_n == 0) return;
++    LOAD_GLES_OES(glGetProgramBinary);
++    LOAD_GLES2(glGetProgramiv);
++    GLint len = 0;
++    double t0 = tsp_prgcache_ms();
++    gles_glGetProgramiv(id, GL_PROGRAM_BINARY_LENGTH_OES, &len);
++    if (len <= 0) {
++        TSP_LOGP("LIBGL: TSP_PRGCACHE miss key=%016llx link_ms=%.1f save=NO-LENGTH\n",
++               (unsigned long long)key, link_ms);
++        return;
++    }
++    void* buf = malloc(len);
++    if (!buf) return;
++    GLsizei got = 0; GLenum fmt = 0;
++    gles_glGetProgramBinary(id, len, &got, &fmt, buf);
++    if (got > 0) {
++        mkdir(tsp_prgcache_dir(), 0777);
++        char path[512], tmp[560];
++        tsp_prgcache_path(path, sizeof(path), key);
++        snprintf(tmp, sizeof(tmp), "%s.tmp", path);
++        FILE* f = fopen(tmp, "wb");
++        int ok = 0;
++        if (f) {
++            uint32_t magic = 0x54535031u, f32 = (uint32_t)fmt, l32 = (uint32_t)got;
++            ok = (fwrite(&magic, 4, 1, f) == 1) && (fwrite(&f32, 4, 1, f) == 1)
++              && (fwrite(&l32, 4, 1, f) == 1) && (fwrite(buf, 1, got, f) == (size_t)got);
++            fclose(f);
++            if (ok) { if (rename(tmp, path) != 0) ok = 0; } else remove(tmp);
++        }
++        TSP_LOGP("LIBGL: TSP_PRGCACHE miss key=%016llx link_ms=%.1f getbin_ms=%.1f bytes=%d saved=%d\n",
++               (unsigned long long)key, link_ms, tsp_prgcache_ms() - t0, (int)got, ok);
++    } else {
++        TSP_LOGP("LIBGL: TSP_PRGCACHE miss key=%016llx link_ms=%.1f save=GOT0\n",
++               (unsigned long long)key, link_ms);
++    }
++    free(buf);
++}
++/* --------------------------------------------------------------------- */
++
+ void APIENTRY_GL4ES gl4es_glLinkProgram(GLuint program) {
+     DBG(printf("glLinkProgram(%d)\n", program);)
+     FLUSH_BEGINEND;
+@@ -786,7 +925,21 @@ void APIENTRY_GL4ES gl4es_glLinkProgram(GLuint program) {
+     if(gles_glLinkProgram) {
+         LOAD_GLES(glGetError);
+         LOAD_GLES2(glGetProgramiv);
+-        gles_glLinkProgram(glprogram->id);
++
++        /* TSP_PRGCACHE_V1: the ONLY line that changes. Everything gl4es does
++           before and after this point is untouched. */
++        {
++            uint64_t tspKey = 0;
++            if (tsp_prgcache_on() && glprogram->last_vert && glprogram->last_frag) {
++                tspKey = tsp_prgcache_fnv(glprogram->last_vert->converted, 1469598103934665603ULL);
++                tspKey = tsp_prgcache_fnv(glprogram->last_frag->converted, tspKey);
++            }
++            if (!(tspKey && tsp_prgcache_load(glprogram->id, tspKey))) {
++                double tspT0 = tsp_prgcache_ms();
++                gles_glLinkProgram(glprogram->id);
++                if (tspKey) tsp_prgcache_save(glprogram->id, tspKey, tsp_prgcache_ms() - tspT0);
++            }
++        }
+         GLenum err = gles_glGetError();
+         // Get Link Status
+         gles_glGetProgramiv(glprogram->id, GL_LINK_STATUS, &glprogram->linked);
+diff --git a/src/gl/shader.c b/src/gl/shader.c
+index 12b6632..7e978a9 100644
+--- a/src/gl/shader.c
++++ b/src/gl/shader.c
+@@ -1,3 +1,13 @@
++#include <stdio.h>
++#include <stdlib.h>
++/* TSP_QUIETLOG_V1 - cache logging is opt-in via LIBGL_TSP_LOG=1, silent by default */
++static int tsp_log_on(void)
++{
++    static int tsp_v = -1;
++    if (tsp_v < 0) { const char* tsp_e = getenv("LIBGL_TSP_LOG"); tsp_v = (tsp_e && tsp_e[0] == '1') ? 1 : 0; }
++    return tsp_v;
++}
++#define TSP_LOGP(...) do { if (tsp_log_on()) printf(__VA_ARGS__); } while (0)
+ #include "shader.h"
+ #include <string.h>
+ #include <stdlib.h>
+@@ -279,6 +289,115 @@ static void tsp_shader_report(const char* stage, GLuint shader, int isVertex,
+     }
+ }
+ 
++
++/* TSP_SHCACHE_V1 -------------------------------------------------------------
++   ConvertShader + the two TSP rewrites cost ~19 ms per shader of pure CPU and
++   are a deterministic function of the raw source, so the result is cacheable.
++   The program-binary cache removes the ~50 ms link; this removes the larger
++   remaining half (~38 ms per program pair).
++
++   CRITICAL: ConvertShader also FILLS glshader->need, which gl4es_glLinkProgram
++   reads back via accumShaderNeeds. Caching only the text would leave need
++   zeroed - the same class of mistake that made the old LD_PRELOAD SCACHE crash
++   in glDrawElements. So the file carries the shaderconv_need_t bytes too, with
++   sizeof in the header so a struct layout change invalidates rather than
++   corrupts. Fails closed: any bad read just converts normally. */
++#include <stdint.h>
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#include <time.h>
++#include <sys/stat.h>
++#include <unistd.h>
++
++#define TSP_SHCACHE_MAGIC 0x54534332u
++
++static int tsp_shcache_on(void) {
++    static int v = -1;
++    if (v < 0) { const char* e = getenv("TSP_SHCACHE"); v = (e && e[0] == '0') ? 0 : 1; }
++    return v;
++}
++static const char* tsp_shcache_dir(void) {
++    static const char* d = NULL;
++    if (!d) { const char* e = getenv("TSP_SHCACHE_DIR"); d = (e && e[0]) ? e : "/mnt/UDISK/tsp_shcache"; }
++    return d;
++}
++static double tsp_shcache_ms(void) {
++    struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts);
++    return ts.tv_sec * 1000.0 + ts.tv_nsec / 1000000.0;
++}
++static uint64_t tsp_shcache_fnv(const char* s, uint64_t h) {
++    if (!s) return h;
++    while (*s) { h ^= (unsigned char)(*s++); h *= 1099511628211ULL; }
++    return h;
++}
++static void tsp_shcache_path(char* out, int n, uint64_t key) {
++    snprintf(out, n, "%s/%016llx.shconv", tsp_shcache_dir(), (unsigned long long)key);
++}
++static char* tsp_shcache_load(uint64_t key, shaderconv_need_t* need) {
++    char path[512]; tsp_shcache_path(path, sizeof(path), key);
++    FILE* f = fopen(path, "rb");
++    if (!f) return NULL;
++    uint32_t magic = 0, nb = 0, len = 0;
++    if (fread(&magic,4,1,f)!=1 || magic!=TSP_SHCACHE_MAGIC
++        || fread(&nb,4,1,f)!=1 || nb!=(uint32_t)sizeof(shaderconv_need_t)
++        || fread(&len,4,1,f)!=1 || len==0 || len>(8u<<20)) { fclose(f); return NULL; }
++    shaderconv_need_t tmp;
++    if (fread(&tmp, 1, nb, f) != nb) { fclose(f); return NULL; }
++    char* txt = (char*)malloc(len + 1);
++    if (!txt) { fclose(f); return NULL; }
++    size_t got = fread(txt, 1, len, f);
++    fclose(f);
++    if (got != (size_t)len) { free(txt); return NULL; }
++    txt[len] = 0;
++    if (need) memcpy(need, &tmp, nb);
++    return txt;
++}
++static void tsp_shcache_save(uint64_t key, const shaderconv_need_t* need, const char* txt) {
++    if (!txt) return;
++    size_t len = strlen(txt);
++    if (!len) return;
++    mkdir(tsp_shcache_dir(), 0777);
++    char path[512], tmp[560];
++    tsp_shcache_path(path, sizeof(path), key);
++    snprintf(tmp, sizeof(tmp), "%s.tmp", path);
++    FILE* f = fopen(tmp, "wb");
++    if (!f) return;
++    uint32_t magic = TSP_SHCACHE_MAGIC, nb = (uint32_t)sizeof(shaderconv_need_t), l32 = (uint32_t)len;
++    int ok = (fwrite(&magic,4,1,f)==1) && (fwrite(&nb,4,1,f)==1) && (fwrite(&l32,4,1,f)==1)
++          && (fwrite(need,1,nb,f)==nb) && (fwrite(txt,1,len,f)==len);
++    fclose(f);
++    if (ok) { if (rename(tmp, path) != 0) remove(tmp); } else remove(tmp);
++}
++/* sets glshader->converted and glshader->need, from cache or by converting */
++static void tsp_shconv_cached(struct shader_s* glshader) {
++    const int tspVert = (glshader->type == GL_VERTEX_SHADER) ? 1 : 0;
++    uint64_t key = 0;
++    if (tsp_shcache_on() && glshader->source) {
++        key = tsp_shcache_fnv(glshader->source, 1469598103934665603ULL);
++        key = tsp_shcache_fnv(tspVert ? "V" : "F", key);
++        double t0 = tsp_shcache_ms();
++        char* cached = tsp_shcache_load(key, &glshader->need);
++        if (cached) {
++            glshader->converted = cached;
++            TSP_LOGP("LIBGL: TSP_SHCACHE hit key=%016llx vert=%d bytes=%u ms=%.1f\n",
++                   (unsigned long long)key, tspVert, (unsigned)strlen(cached),
++                   tsp_shcache_ms() - t0);
++            return;
++        }
++    }
++    double t1 = tsp_shcache_ms();
++    glshader->converted = tsp_invariant_pos(tsp_highp_varyings(ConvertShader(glshader->source, tspVert, &glshader->need)), tspVert);
++    double conv_ms = tsp_shcache_ms() - t1;
++    if (key) {
++        tsp_shcache_save(key, &glshader->need, glshader->converted);
++        TSP_LOGP("LIBGL: TSP_SHCACHE miss key=%016llx vert=%d conv_ms=%.1f bytes=%u\n",
++               (unsigned long long)key, tspVert, conv_ms,
++               glshader->converted ? (unsigned)strlen(glshader->converted) : 0u);
++    }
++}
++/* --------------------------------------------------------------------- */
++
+ void APIENTRY_GL4ES gl4es_glShaderSource(GLuint shader, GLsizei count, const GLchar * const *string, const GLint *length) {
+     DBG(printf("glShaderSource(%d, %d, %p, %p)\n", shader, count, string, length);)
+     // sanity check
+@@ -310,7 +429,7 @@ void APIENTRY_GL4ES gl4es_glShaderSource(GLuint shader, GLsizei count, const GLc
+         if(glstate->glsl->es2 && !strncmp(glshader->source, "#version 100", 12))
+             glshader->converted = strdup(glshader->source);
+         else
+-            glshader->converted = tsp_invariant_pos(tsp_highp_varyings(ConvertShader(glshader->source, glshader->type==GL_VERTEX_SHADER?1:0, &glshader->need)), glshader->type==GL_VERTEX_SHADER);
++            tsp_shconv_cached(glshader); /* TSP_SHCACHE_V1 */
+             tsp_shader_report("convert", shader, glshader->type==GL_VERTEX_SHADER, glshader->source, glshader->converted);
+         // send source to GLES2 hardware if any
+         tsp_dump_conv(glshader->type==GL_VERTEX_SHADER, glshader->source, glshader->converted);
+@@ -368,7 +487,7 @@ void redoShader(GLuint shader, shaderconv_need_t *need) {
+         return;
+     free(glshader->converted);
+     memcpy(&glshader->need, need, sizeof(shaderconv_need_t));
+-    glshader->converted = tsp_invariant_pos(tsp_highp_varyings(ConvertShader(glshader->source, glshader->type==GL_VERTEX_SHADER?1:0, &glshader->need)), glshader->type==GL_VERTEX_SHADER);
++    tsp_shconv_cached(glshader); /* TSP_SHCACHE_V1 */
+     tsp_shader_report("convert", shader, glshader->type==GL_VERTEX_SHADER, glshader->source, glshader->converted);
+     // send source to GLES2 hardware if any
+     gles_glShaderSource(shader, 1, (const GLchar * const*)((glshader->converted)?(&glshader->converted):(&glshader->source)), NULL);
+diff --git a/src/gl/texture.c b/src/gl/texture.c
+index c0d479a..e939d42 100644
+--- a/src/gl/texture.c
++++ b/src/gl/texture.c
+@@ -906,6 +906,14 @@ GLenum minmag_float(GLenum filt) {
+ void APIENTRY_GL4ES gl4es_glTexImage2D(GLenum target, GLint level, GLint internalformat,
+                   GLsizei width, GLsizei height, GLint border,
+                   GLenum format, GLenum type, const GLvoid *data) {
++    /* TSP_TEXLIFE_V2 */
++    const GLsizei tsp_in_width = width;
++    const GLsizei tsp_in_height = height;
++    const GLenum tsp_in_format = format;
++    const GLenum tsp_in_type = type;
++    const GLvoid* tsp_in_data = data;
++    glbuffer_t* tsp_in_unpack = glstate->vao->unpack;
++
+     DBG(printf("glTexImage2D on target=%s with unpack_row_length(%i), size(%i,%i) and skip(%i,%i), format(internal)=%s(%s), type=%s, data=%p, level=%i (mipmap_need=%i, mipmap_auto=%i, base_level=%i, max_level=%i) => texture=%u (streamed=%i), glstate->list.compiling=%d\n", PrintEnum(target), glstate->texture.unpack_row_length, width, height, glstate->texture.unpack_skip_pixels, glstate->texture.unpack_skip_rows, PrintEnum(format), (internalformat==3)?"3":(internalformat==4?"4":PrintEnum(internalformat)), PrintEnum(type), data, level, glstate->texture.bound[glstate->texture.active][what_target(target)]->mipmap_need, glstate->texture.bound[glstate->texture.active][what_target(target)]->mipmap_auto, glstate->texture.bound[glstate->texture.active][what_target(target)]->base_level, glstate->texture.bound[glstate->texture.active][what_target(target)]->max_level, glstate->texture.bound[glstate->texture.active][what_target(target)]->texture, glstate->texture.bound[glstate->texture.active][what_target(target)]->streamed, glstate->list.compiling);)
+     
+     if(data==NULL && (internalformat == GL_RGB16F || internalformat == GL_RGBA16F))
+@@ -919,6 +927,20 @@ void APIENTRY_GL4ES gl4es_glTexImage2D(GLenum target, GLint level, GLint interna
+     // proxy case
+     const GLuint itarget = what_target(target);
+     const GLuint rtarget = map_tex_target(target);
++
++    gltexture_t* tsp_bound
++        = glstate->texture.bound[glstate->texture.active][itarget];
++
++    tsp_texlife_image(
++        "IMG_BEGIN",
++        tsp_bound,
++        level,
++        tsp_in_width,
++        tsp_in_height,
++        tsp_in_format,
++        tsp_in_type,
++        tsp_in_data,
++        tsp_in_unpack);
+     LOAD_GLES(glTexImage2D);
+     LOAD_GLES(glTexSubImage2D);
+     void gles_glTexParameteri(glTexParameteri_ARG_EXPAND); //LOAD_GLES(glTexParameteri);
+@@ -993,7 +1015,7 @@ void APIENTRY_GL4ES gl4es_glTexImage2D(GLenum target, GLint level, GLint interna
+                 gl4es_glRenderbufferStorage(GL_RENDERBUFFER, (bound->binded_attachment==GL_DEPTH_ATTACHMENT)?GL_DEPTH_COMPONENT16:GL_DEPTH24_STENCIL8, nwidth, nheight);
+                 gl4es_glBindRenderbuffer(GL_RENDERBUFFER, 0);
+             } else {
+-                gles_glTexImage2D(GL_TEXTURE_2D, 0, bound->format, bound->nwidth, bound->nheight, 0, bound->format, bound->type, NULL);
++                tsp_native_gles_teximage2d_v2(GL_TEXTURE_2D, 0, bound->format, bound->nwidth, bound->nheight, 0, bound->format, bound->type, NULL);
+             }
+         }
+         if((bound->binded_attachment==GL_STENCIL_ATTACHMENT || bound->binded_attachment==GL_DEPTH_STENCIL_ATTACHMENT) && bound->renderstencil)
+@@ -1420,7 +1442,7 @@ void APIENTRY_GL4ES gl4es_glTexImage2D(GLenum target, GLint level, GLint interna
+             
+             if (height != nheight || width != nwidth) {
+                 errorGL();
+-                gles_glTexImage2D(rtarget, level, format, nwidth, nheight, border,
++                tsp_native_gles_teximage2d_v2(rtarget, level, format, nwidth, nheight, border,
+                                 format, type, NULL);
+                 DBG(CheckGLError(1);)
+                 if (pixels) {
+@@ -1436,13 +1458,13 @@ void APIENTRY_GL4ES gl4es_glTexImage2D(GLenum target, GLint level, GLint interna
+                     if(height==1) {gles_glTexSubImage2D(rtarget, level, 0, 1, width, height, format, type, pixels); nheight=1;}
+                     if(width==1 && height==1) {   // create a manual mipmap just in case_state
+                         gles_glTexSubImage2D(rtarget, level, 1, 1, width, height, format, type, pixels);
+-                        gles_glTexImage2D(rtarget, 1, format, 1, 1, 0, format, type, pixels);
++                        tsp_native_gles_teximage2d_v2(rtarget, 1, format, 1, 1, 0, format, type, pixels);
+                     }
+                 }
+ #endif
+             } else {
+                 errorGL();
+-                gles_glTexImage2D(rtarget, level, format, width, height, border,
++                tsp_native_gles_teximage2d_v2(rtarget, level, format, width, height, border,
+                                 format, type, pixels);
+                 DBG(CheckGLError(1);)
+             }
+@@ -1464,7 +1486,7 @@ void APIENTRY_GL4ES gl4es_glTexImage2D(GLenum target, GLint level, GLint interna
+                     nww <<= 1;
+                     nhh <<= 1;
+                     --leveln;
+-                    gles_glTexImage2D(rtarget, leveln, format, nww, nhh, border,
++                    tsp_native_gles_teximage2d_v2(rtarget, leveln, format, nww, nhh, border,
+                                     format, type, (pot)?ndata:NULL);
+                     if(!pot && pixels) gles_glTexSubImage2D(rtarget, leveln, 0, 0, nw, nh,
+                                         format, type, ndata);
+@@ -1494,7 +1516,7 @@ void APIENTRY_GL4ES gl4es_glTexImage2D(GLenum target, GLint level, GLint interna
+                     nww = nlevel(nww, 1);
+                     nhh = nlevel(nhh, 1);
+                     ++leveln;
+-                    gles_glTexImage2D(rtarget, leveln, format, nw, nh, border,
++                    tsp_native_gles_teximage2d_v2(rtarget, leveln, format, nw, nh, border,
+                                     format, type, (pot)?ndata:NULL);
+                     if(!pot && pixels) gles_glTexSubImage2D(rtarget, leveln, 0, 0, nww, nhh,
+                                         format, type, ndata);
+@@ -1533,11 +1555,30 @@ void APIENTRY_GL4ES gl4es_glTexImage2D(GLenum target, GLint level, GLint interna
+     // update max bound to be sure "sampler" is applied
+     if(glstate->bound_changed<glstate->texture.active+1)
+         glstate->bound_changed = glstate->texture.active+1;
++
++    tsp_texlife_image(
++        "IMG_END",
++        tsp_bound,
++        level,
++        tsp_in_width,
++        tsp_in_height,
++        tsp_in_format,
++        tsp_in_type,
++        tsp_in_data,
++        tsp_in_unpack);
++
+ }
+ 
+ void APIENTRY_GL4ES gl4es_glTexSubImage2D(GLenum target, GLint level, GLint xoffset, GLint yoffset,
+                      GLsizei width, GLsizei height, GLenum format, GLenum type,
+                      const GLvoid *data) {
++    /* TSP_TEXLIFE_V2 */
++    const GLsizei tsp_in_width = width;
++    const GLsizei tsp_in_height = height;
++    const GLenum tsp_in_format = format;
++    const GLenum tsp_in_type = type;
++    const GLvoid* tsp_in_data = data;
++    glbuffer_t* tsp_in_unpack = glstate->vao->unpack;
+ 
+     if (glstate->list.pending) {
+         gl4es_flush();
+@@ -1571,6 +1612,17 @@ void APIENTRY_GL4ES gl4es_glTexSubImage2D(GLenum target, GLint level, GLint xoff
+     }
+     
+     gltexture_t *bound = glstate->texture.bound[glstate->texture.active][itarget];
++
++    tsp_texlife_image(
++        "SUB_BEGIN",
++        bound,
++        level,
++        tsp_in_width,
++        tsp_in_height,
++        tsp_in_format,
++        tsp_in_type,
++        tsp_in_data,
++        tsp_in_unpack);
+     if (globals4es.automipmap) {
+         if (level>0)
+             if ((globals4es.automipmap==1) || (globals4es.automipmap==3) || bound->mipmap_need) {
+@@ -1772,6 +1824,18 @@ void APIENTRY_GL4ES gl4es_glTexSubImage2D(GLenum target, GLint level, GLint xoff
+ 
+     if (pixels != datab)
+         free((GLvoid *)pixels);
++
++    tsp_texlife_image(
++        "SUB_END",
++        bound,
++        level,
++        tsp_in_width,
++        tsp_in_height,
++        tsp_in_format,
++        tsp_in_type,
++        tsp_in_data,
++        tsp_in_unpack);
++
+ }
+ 
+ // 1d stubs
+diff --git a/src/gl/texture.h b/src/gl/texture.h
+index 33e140a..c36d78e 100644
+--- a/src/gl/texture.h
++++ b/src/gl/texture.h
+@@ -158,6 +158,31 @@ typedef struct {
+     float fbtex_ratio; // Lower rendering resolution
+ } gltexture_t;
+ 
++
++/* TSP_TEXLIFE_V2
++ * Diagnostic-only texture lifetime / upload / FBO correlation.
++ * Dormant unless LIBGL_TSP_TEXLIFE or LIBGL_TSP_FBOPATH is set.
++ */
++void tsp_texlife_created(gltexture_t* tex);
++void tsp_texlife_deleted(gltexture_t* tex);
++
++void tsp_texlife_image(
++    const char* op,
++    gltexture_t* tex,
++    GLint level,
++    GLsizei width,
++    GLsizei height,
++    GLenum format,
++    GLenum type,
++    const GLvoid* data,
++    glbuffer_t* unpack);
++
++void tsp_texlife_attach(
++    const char* op,
++    gltexture_t* tex,
++    GLuint fbo,
++    GLenum attachment);
++
+ KHASH_MAP_DECLARE_INT(tex, gltexture_t *);
+ 
+ static inline GLenum map_tex_target(GLenum target) {
+diff --git a/src/gl/texture_compressed.c b/src/gl/texture_compressed.c
+index 25d2d74..b84928c 100644
+--- a/src/gl/texture_compressed.c
++++ b/src/gl/texture_compressed.c
+@@ -337,7 +337,7 @@ void APIENTRY_GL4ES gl4es_glCompressedTexImage2D(GLenum target, GLint level, GLe
+         bound->valid = 1;
+         if (glstate->fpe_state && glstate->fpe_bound_changed < glstate->texture.active+1)
+             glstate->fpe_bound_changed = glstate->texture.active+1;
+-        gles_glCompressedTexImage2D(rtarget, level, internalformat, width, height, border, imageSize, datab);
++        tsp_native_gles_compressed_teximage2d_v2(rtarget, level, internalformat, width, height, border, imageSize, datab);
+         errorGL();
+     }
+     glstate->vao->unpack = unpack;
+diff --git a/src/gl/texture_params.c b/src/gl/texture_params.c
+index 5c7961e..a5d615e 100644
+--- a/src/gl/texture_params.c
++++ b/src/gl/texture_params.c
+@@ -16,6 +16,336 @@
+ #include "pixel.h"
+ #include "raster.h"
+ 
++
++/* TSP_TEXLIFE_V2 ---------------------------------------------------------
++ * Full texture lifetime/resource accounting for the TSP map investigation.
++ *
++ * Output:
++ *   explicit LIBGL_TSP_TEXLIFE=/path
++ * or, in the existing FBO diagnostic modes:
++ *   ${LIBGL_TSP_FBOPATH}.texlife
++ *
++ * This intentionally streams to disk and keeps no unbounded diagnostic
++ * allocation in memory.
++ */
++#include <stdint.h>
++#include <stdarg.h>
++#include <stdio.h>
++#include <stdlib.h>
++#include <sys/time.h>
++
++static FILE* tsp_texlife_file(void)
++{
++    static int checked = 0;
++    static FILE* file = NULL;
++    static char derived[1024];
++
++    if (!checked)
++    {
++        checked = 1;
++
++        const char* path = getenv("LIBGL_TSP_TEXLIFE");
++
++        if (!path || !path[0])
++        {
++            const char* fbo = getenv("LIBGL_TSP_FBOPATH");
++
++            if (fbo && fbo[0])
++            {
++                snprintf(
++                    derived,
++                    sizeof(derived),
++                    "%s.texlife",
++                    fbo);
++
++                path = derived;
++            }
++        }
++
++        if (path && path[0])
++        {
++            file = fopen(path, "w");
++
++            if (file)
++            {
++                setvbuf(file, NULL, _IOLBF, 0);
++
++                fprintf(
++                    file,
++                    "# TSP_TEXLIFE_V2 epoch_ms seq event fields\n");
++            }
++        }
++    }
++
++    return file;
++}
++
++
++static volatile unsigned long tsp_texlife_seq = 0;
++static volatile unsigned long tsp_texlife_live = 0;
++static volatile unsigned long tsp_texlife_created_n = 0;
++static volatile unsigned long tsp_texlife_deleted_n = 0;
++
++
++static unsigned long long tsp_texlife_ms(void)
++{
++    struct timeval tv;
++
++    gettimeofday(&tv, NULL);
++
++    return
++        (unsigned long long)tv.tv_sec * 1000ULL
++        + (unsigned long long)(tv.tv_usec / 1000);
++}
++
++
++static int tsp_texlife_interesting_size(int w, int h)
++{
++    if (w == 256 && h == 256)
++        return 1;
++
++    if ((w == 512 && h == 1024)
++        || (w == 1024 && h == 512))
++        return 1;
++
++    /* Current world-map target is around 954x864, but retain tolerance. */
++    if (w >= 850 && h >= 750)
++        return 1;
++
++    return 0;
++}
++
++
++static unsigned long tsp_texlife_pbo_hash(
++    glbuffer_t* unpack,
++    const GLvoid* data)
++{
++    if (!unpack || !unpack->data || unpack->size <= 0)
++        return 0;
++
++    uintptr_t off = (uintptr_t)data;
++
++    if (off >= (uintptr_t)unpack->size)
++        return 0;
++
++    size_t bytes = (size_t)unpack->size - (size_t)off;
++
++    /* Sample enough to distinguish changing fog payloads without hashing
++     * enormous buffers on every upload. */
++    if (bytes > 16384)
++        bytes = 16384;
++
++    const unsigned char* p
++        = (const unsigned char*)unpack->data + off;
++
++    unsigned long h = 2166136261u;
++
++    for (size_t i = 0; i < bytes; ++i)
++        h = (h ^ p[i]) * 16777619u;
++
++    return h;
++}
++
++
++static void tsp_texlife_log(const char* fmt, ...)
++{
++    FILE* file = tsp_texlife_file();
++
++    if (!file)
++        return;
++
++    unsigned long seq
++        = __sync_add_and_fetch(&tsp_texlife_seq, 1);
++
++    fprintf(
++        file,
++        "%llu seq=%lu ",
++        tsp_texlife_ms(),
++        seq);
++
++    va_list ap;
++
++    va_start(ap, fmt);
++    vfprintf(file, fmt, ap);
++    va_end(ap);
++
++    fputc('\n', file);
++}
++
++
++void tsp_texlife_created(gltexture_t* tex)
++{
++    if (!tex || !tsp_texlife_file())
++        return;
++
++    unsigned long live
++        = __sync_add_and_fetch(&tsp_texlife_live, 1);
++
++    unsigned long created
++        = __sync_add_and_fetch(&tsp_texlife_created_n, 1);
++
++    unsigned long deleted = tsp_texlife_deleted_n;
++
++    /* Periodic total accounting plus a few startup objects. */
++    if (created <= 32 || (created & 0xffUL) == 0)
++    {
++        tsp_texlife_log(
++            "SUMMARY cause=create live=%lu created=%lu deleted=%lu "
++            "id=%u gl=%u target=0x%x",
++            live,
++            created,
++            deleted,
++            tex->texture,
++            tex->glname,
++            tex->target);
++    }
++}
++
++
++void tsp_texlife_deleted(gltexture_t* tex)
++{
++    if (!tex || !tsp_texlife_file())
++        return;
++
++    unsigned long before = tsp_texlife_live;
++
++    if (tsp_texlife_interesting_size(tex->width, tex->height)
++        || tex->binded_fbo)
++    {
++        tsp_texlife_log(
++            "DELETE live_before=%lu id=%u gl=%u "
++            "size=%dx%d native=%dx%d "
++            "fmt=0x%x type=0x%x "
++            "fbo=%d att=0x%x",
++            before,
++            tex->texture,
++            tex->glname,
++            tex->width,
++            tex->height,
++            tex->nwidth,
++            tex->nheight,
++            tex->format,
++            tex->type,
++            tex->binded_fbo,
++            tex->binded_attachment);
++    }
++
++    unsigned long live = before;
++
++    if (before)
++        live = __sync_sub_and_fetch(&tsp_texlife_live, 1);
++
++    unsigned long deleted
++        = __sync_add_and_fetch(&tsp_texlife_deleted_n, 1);
++
++    unsigned long created = tsp_texlife_created_n;
++
++    if (tsp_texlife_interesting_size(tex->width, tex->height)
++        || tex->binded_fbo
++        || (deleted & 0xffUL) == 0)
++    {
++        tsp_texlife_log(
++            "SUMMARY cause=delete live=%lu created=%lu deleted=%lu",
++            live,
++            created,
++            deleted);
++    }
++}
++
++
++void tsp_texlife_image(
++    const char* op,
++    gltexture_t* tex,
++    GLint level,
++    GLsizei width,
++    GLsizei height,
++    GLenum format,
++    GLenum type,
++    const GLvoid* data,
++    glbuffer_t* unpack)
++{
++    if (!tex || !tsp_texlife_file())
++        return;
++
++    if (!unpack
++        && !tex->binded_fbo
++        && !tsp_texlife_interesting_size(width, height)
++        && !tsp_texlife_interesting_size(tex->width, tex->height))
++    {
++        return;
++    }
++
++    tsp_texlife_log(
++        "%s "
++        "id=%u gl=%u level=%d "
++        "in=%dx%d tex=%dx%d native=%dx%d "
++        "fmt=0x%x type=0x%x src=%p "
++        "pbo=%u pbo_real=%u pbo_size=%ld pbo_off=%lu pbo_hash=%lu "
++        "fbo=%d att=0x%x "
++        "live=%lu created=%lu deleted=%lu",
++        op,
++        tex->texture,
++        tex->glname,
++        level,
++        width,
++        height,
++        tex->width,
++        tex->height,
++        tex->nwidth,
++        tex->nheight,
++        format,
++        type,
++        data,
++        unpack ? unpack->buffer : 0,
++        unpack ? unpack->real_buffer : 0,
++        unpack ? (long)unpack->size : 0L,
++        unpack ? (unsigned long)(uintptr_t)data : 0UL,
++        tsp_texlife_pbo_hash(unpack, data),
++        tex->binded_fbo,
++        tex->binded_attachment,
++        tsp_texlife_live,
++        tsp_texlife_created_n,
++        tsp_texlife_deleted_n);
++}
++
++
++void tsp_texlife_attach(
++    const char* op,
++    gltexture_t* tex,
++    GLuint fbo,
++    GLenum attachment)
++{
++    if (!tex || !tsp_texlife_file())
++        return;
++
++    tsp_texlife_log(
++        "%s "
++        "id=%u gl=%u fbo=%u att=0x%x "
++        "size=%dx%d native=%dx%d "
++        "fmt=0x%x type=0x%x "
++        "live=%lu created=%lu deleted=%lu",
++        op,
++        tex->texture,
++        tex->glname,
++        fbo,
++        attachment,
++        tex->width,
++        tex->height,
++        tex->nwidth,
++        tex->nheight,
++        tex->format,
++        tex->type,
++        tsp_texlife_live,
++        tsp_texlife_created_n,
++        tsp_texlife_deleted_n);
++}
++
++/* ---------------------------------------------------------------------- */
++
++/* TSP_NATIVE_LIFE_DIAG_V1 */
++void tsp_native_life_texture_generated(GLuint glname);
++void tsp_native_life_texture_deleted(GLuint glname);
++
+ KHASH_MAP_IMPL_INT(tex, gltexture_t *);
+ 
+ //#define DEBUG
+@@ -174,9 +504,10 @@ gltexture_t* gl4es_getTexture(GLenum target, GLuint texture) {
+         tex = kh_value(list, k) = malloc(sizeof(gltexture_t));
+         memset(tex, 0, sizeof(gltexture_t));
+         tex->texture = texture;
+-        if (texture)
++        if (texture) {
+             gles_glGenTextures(1, &tex->glname);
+-        else
++            tsp_native_life_texture_generated(tex->glname);
++        } else
+             tex->glname = 0;    // special case for texture n# 0
+         DBG(printf("getTexture(%s, %u), failed, creating texture %u\n", PrintEnum(target), texture, tex->glname);)
+         tex->target = target;
+@@ -193,6 +524,7 @@ gltexture_t* gl4es_getTexture(GLenum target, GLuint texture) {
+         tex->type = GL_UNSIGNED_BYTE;
+         tex->inter_format = GL_RGBA;
+         tex->inter_type = GL_UNSIGNED_BYTE;
++        tsp_texlife_created(tex);
+     } else {
+         tex = kh_value(list, k);
+     }
+@@ -420,14 +752,15 @@ void APIENTRY_GL4ES gl4es_glDeleteTextures(GLsizei n, const GLuint *textures) {
+                     if(found)
+                         glstate->bound_changed = a+1;
+                 }
++                tsp_texlife_deleted(tex);
++                tsp_native_life_texture_deleted(tex->glname);
+                 gles_glDeleteTextures(1, &tex->glname);
+-                // check if renderbuffer where associeted
+-                if(tex->binded_fbo) {
+-                    if(tex->renderdepth)
+-                        gl4es_glDeleteRenderbuffers(1, &tex->renderdepth);
+-                    if(tex->renderstencil)
+-                        gl4es_glDeleteRenderbuffers(1, &tex->renderstencil);
+-                }
++                /* TSP_PVR_RB_LIFETIME_FIX_V1: proxy ownership belongs to
++                   the texture, not to current binded_fbo state. */
++                if(tex->renderdepth)
++                    gl4es_glDeleteRenderbuffers(1, &tex->renderdepth);
++                if(tex->renderstencil)
++                    gl4es_glDeleteRenderbuffers(1, &tex->renderstencil);
+                 errorGL();
+ #ifdef TEXSTREAM
+                 if (globals4es.texstream && tex->streamed)
+@@ -456,6 +789,8 @@ void APIENTRY_GL4ES gl4es_glGenTextures(GLsizei n, GLuint * textures) {
+     FLUSH_BEGINEND;
+     LOAD_GLES(glGenTextures);
+     gles_glGenTextures(n, textures);
++    for (int tsp_i = 0; tsp_i < n; ++tsp_i)
++        tsp_native_life_texture_generated(textures[tsp_i]);
+     errorGL();
+     // now, add all the textures to the list
+     int ret;
+@@ -485,6 +820,7 @@ void APIENTRY_GL4ES gl4es_glGenTextures(GLsizei n, GLuint * textures) {
+             tex->type = GL_UNSIGNED_BYTE;
+             tex->inter_format = GL_RGBA;
+             tex->inter_type = GL_UNSIGNED_BYTE;
++            tsp_texlife_created(tex);
+         } else {
+             tex = kh_value(list, k);
+             // in case of no delete here...
+diff --git a/src/glx/hardext.c b/src/glx/hardext.c
+index 4aa7372..d21ba3e 100644
+--- a/src/glx/hardext.c
++++ b/src/glx/hardext.c
+@@ -1,3 +1,13 @@
++#include <stdio.h>
++#include <stdlib.h>
++/* TSP_QUIETLOG_V1 - cache/dump logging is opt-in via LIBGL_TSP_LOG=1, silent by default */
++static int tsp_log_on(void)
++{
++    static int tsp_v = -1;
++    if (tsp_v < 0) { const char* tsp_e = getenv("LIBGL_TSP_LOG"); tsp_v = (tsp_e && tsp_e[0] == '1') ? 1 : 0; }
++    return tsp_v;
++}
++#define TSP_LOGP(...) do { if (tsp_log_on()) printf(__VA_ARGS__); } while (0)
+ #include "hardext.h"
+ 
+ #include "../gl/debug.h"
+@@ -566,9 +576,9 @@ void tsp_late_hardext(void) {
+         const char* e = gles_glGetString ? (const char*)gles_glGetString(GL_EXTENSIONS) : NULL;
+         const char* v = gles_glGetString ? (const char*)gles_glGetString(GL_VENDOR) : NULL;
+         const char* r = gles_glGetString ? (const char*)gles_glGetString(GL_RENDERER) : NULL;
+-        printf("LIBGL: TSP_EXTDUMP vendor=[%s] renderer=[%s]\n", v?v:"NULL", r?r:"NULL");
+-        printf("LIBGL: TSP_EXTDUMP extlen=%d\n", e?(int)strlen(e):-1);
+-        if(e) printf("LIBGL: TSP_EXTDUMP ext=[%s]\n", e);
++        TSP_LOGP("LIBGL: TSP_EXTDUMP vendor=[%s] renderer=[%s]\n", v?v:"NULL", r?r:"NULL");
++        TSP_LOGP("LIBGL: TSP_EXTDUMP extlen=%d\n", e?(int)strlen(e):-1);
++        if(e) TSP_LOGP("LIBGL: TSP_EXTDUMP ext=[%s]\n", e);
+     }
+     printf("LIBGL: TSP_LATE depth24=%d depthstencil=%d derivatives=%d npot=%d vendor=0x%x highp=%d prgbinary=%d prgbin_n=%d\n",
+            hardext.depth24, hardext.depthstencil, hardext.derivatives,

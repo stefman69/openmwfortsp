@@ -1,0 +1,134 @@
+--- tsp_drawthread_v1.sh
++++ tsp_drawthread_v1.sh
+@@ -20,8 +20,11 @@
+ #         thread (= the OSG draw thread once the world is up) is pinned to the draw core and every other thread
+ #         kept off it, re-checked every 5s (tsp_cpu_apply_split scatters them at 8/25/60s, and OSG re-creates
+ #         the thread with an all-CPU mask on settings changes). Sample line every 60s.
+-#  CLEAN  cleanup_children also puts the onlined core back (signal path).
+-# Policy file $GAMEDIR/tsp_drawthread_policy.txt (no file = defaults): model=single | core=off | pin=off | idle=main
++#  CLOCK  TSP_CPUCLOCK_V1, after the governor boost: lift scaling_max_freq to cpuinfo_max_freq on every online
++#         core (the probe read the A133 at a flat 1.2 GHz of a 2.0 GHz ceiling with governor=performance), enable
++#         the cpufreq boost knob if present, log the cooling-device state. Saved and restored on exit.
++#  CLEAN  cleanup_children also puts the onlined core back and restores the clock cap (signal path).
++# Policy file $GAMEDIR/tsp_drawthread_policy.txt (no file = defaults): model=single | core=off | pin=off | idle=main | clock=off
+ #   idle=main parks SCHED_IDLE threads (OpenMW's navmesh updater) on the main thread's core so they only ever get its
+ #   leftover cycles instead of a whole core. Off by default: a starved navmesh updater is the hitching you just fixed.
+ # Sample line fields: khz=main:/draw: core clocks, temp=hottest zone, /IDLE marks SCHED_IDLE threads, wait main=/draw=
+@@ -87,7 +90,7 @@
+ write_patcher() {
+ cat > "$1" <<'EOF_AWK'
+ # TSP_DRAWTHREAD_V1 launcher patcher. Input: the current Roms/PORTS/Morrowind.sh (must not carry the marker yet).
+-BEGIN { model = 0; core = 0; pid = 0; clean = 0 }
++BEGIN { model = 0; core = 0; pid = 0; clean = 0; clock = 0 }
+ /TSP_DRAWTHREAD_V1/ { print "TSP_DRAWTHREAD_V1 PATCH REFUSED: launcher already carries the marker" > "/dev/stderr"; exit 4 }
+ { line = $0; sub(/^[ \t]+/, "", line); sub(/[ \t]+$/, "", line) }
+ line == "export OSG_THREADING=SingleThreaded" && model == 0 {
+@@ -110,6 +113,48 @@
+     clean = 1
+     print
+     print "    [ -n \"${TSP_DRAW_ONLINED:-}\" ] && { echo 0 > \"$TSP_SYS_CPU/cpu$TSP_DRAW_ONLINED/online\" 2>/dev/null; echo \"TSP_DRAWTHREAD_V1 cpu$TSP_DRAW_ONLINED back offline (signal path)\"; }   # TSP_DRAWTHREAD_V1 CLEAN"
++    print "    tsp_cpuclock_restore 2>/dev/null || true   # TSP_CPUCLOCK_V1 CLEAN"
++    next
++}
++line == "tsp_cpu_governor_boost" && clock == 0 {
++    clock = 1
++    print
++    print "# >>> TSP_CPUCLOCK_V1 BEGIN"
++    print "# tsp_gpuprobe read every A133 core at 1,200,000 kHz for a whole run with the governor already on"
++    print "# performance; the silicon ceiling (cpuinfo_max_freq) is 2,000,000. Lift scaling_max_freq to the ceiling on"
++    print "# every online core (saved, put back on exit), enable the cpufreq boost knob where the driver has one, and log"
++    print "# the cooling-device state so a thermally throttled run is recognisable from the log alone."
++    print "# clock=off in $GAMEDIR/tsp_drawthread_policy.txt skips it. Cores already at their ceiling are left alone."
++    print "TSP_CLOCK_SAVE=/tmp/tsp-maxfreq.saved"
++    print "tsp_cpuclock_restore() {"
++    print "    [ -r \"$TSP_CLOCK_SAVE\" ] || return 0"
++    print "    while read -r _n _v; do"
++    print "        [ -n \"$_n\" ] || continue"
++    print "        if [ \"$_n\" = boost ]; then echo \"$_v\" > \"$TSP_SYS_CPU/cpufreq/boost\" 2>/dev/null; else echo \"$_v\" > \"$TSP_SYS_CPU/cpu$_n/cpufreq/scaling_max_freq\" 2>/dev/null; fi"
++    print "    done < \"$TSP_CLOCK_SAVE\""
++    print "    rm -f \"$TSP_CLOCK_SAVE\"; echo \"TSP_CPUCLOCK_V1 restored\""
++    print "}"
++    print "if grep -qs '^clock=off' \"$GAMEDIR/tsp_drawthread_policy.txt\"; then"
++    print "    echo \"TSP_CPUCLOCK_V1 off (policy)\" | tee -a /mnt/SDCARD/tsp_prog.txt"
++    print "else"
++    print "    : > \"$TSP_CLOCK_SAVE\"; _cl=\"\""
++    print "    for _d in \"$TSP_SYS_CPU\"/cpu[0-9]*; do"
++    print "        _n=${_d##*/cpu}; case \"$_n\" in ''|*[!0-9]*) continue ;; esac"
++    print "        [ -r \"$_d/cpufreq/scaling_max_freq\" ] || continue"
++    print "        _on=1; [ -r \"$_d/online\" ] && read -r _on < \"$_d/online\"; [ \"$_on\" = 1 ] || continue"
++    print "        read -r _smax < \"$_d/cpufreq/scaling_max_freq\"; _hmax=0; [ -r \"$_d/cpufreq/cpuinfo_max_freq\" ] && read -r _hmax < \"$_d/cpufreq/cpuinfo_max_freq\""
++    print "        if [ \"$_smax\" -lt \"$_hmax\" ] 2>/dev/null; then"
++    print "            echo \"$_n $_smax\" >> \"$TSP_CLOCK_SAVE\""
++    print "            if echo \"$_hmax\" > \"$_d/cpufreq/scaling_max_freq\" 2>/dev/null; then _cl=\"$_cl cpu$_n:$_smax->$(cat \"$_d/cpufreq/scaling_max_freq\" 2>/dev/null)\"; else _cl=\"$_cl cpu$_n:$_smax->REFUSED\"; fi"
++    print "        else"
++    print "            _cl=\"$_cl cpu$_n:$_smax=ceiling\""
++    print "        fi"
++    print "    done"
++    print "    if [ -w \"$TSP_SYS_CPU/cpufreq/boost\" ]; then _b0=$(cat \"$TSP_SYS_CPU/cpufreq/boost\" 2>/dev/null); [ \"$_b0\" = 1 ] || { echo \"boost $_b0\" >> \"$TSP_CLOCK_SAVE\"; echo 1 > \"$TSP_SYS_CPU/cpufreq/boost\" 2>/dev/null; }; _cl=\"$_cl boost:$_b0->$(cat \"$TSP_SYS_CPU/cpufreq/boost\" 2>/dev/null)\"; fi"
++    print "    _cool=\"\"; for _c in /sys/class/thermal/cooling_device*; do [ -r \"$_c/type\" ] || continue; _ct=$(cat \"$_c/type\"); case \"$_ct\" in *cpu*|*cluster*) _cool=\"$_cool $_ct:$(cat \"$_c/cur_state\" 2>/dev/null)/$(cat \"$_c/max_state\" 2>/dev/null)\";; esac; done"
++    print "    echo \"TSP_CPUCLOCK_V1 armed$_cl avail=[$(cat \"$TSP_SYS_CPU/cpu0/cpufreq/scaling_available_frequencies\" 2>/dev/null | tr -s ' ' ',')] cooling=[$_cool] temp=$(for _z in /sys/class/thermal/thermal_zone*/temp; do cat \"$_z\" 2>/dev/null; done | sort -n | tail -1)\" | tee -a /mnt/SDCARD/tsp_prog.txt"
++    print "fi"
++    print "# <<< TSP_CPUCLOCK_V1 END"
+     next
+ }
+ line == "tsp_cpu_optimize" && core == 0 {
+@@ -233,11 +278,12 @@
+     print "    done"
+     print "    rm -f \"$_A\" \"$_P\" \"$_S1\" \"$_S2\""
+     print "    [ -n \"$TSP_DRAW_ONLINED\" ] && { echo 0 > \"$TSP_SYS_CPU/cpu$TSP_DRAW_ONLINED/online\" 2>/dev/null; echo \"TSP_DRAWTHREAD_V1 cpu$TSP_DRAW_ONLINED back offline: online_now=$(cat \"$TSP_SYS_CPU/online\" 2>/dev/null)\"; }"
++    print "    tsp_cpuclock_restore 2>/dev/null || true"
+     print ") &"
+     print "TSP_DRAWTHREAD_KEEPER_PID=$!"
+     print "# <<< TSP_DRAWTHREAD_V1 KEEPER END"
+ }
+-END { if (model != 1 || core != 1 || pid != 1 || clean != 1) { print "TSP_DRAWTHREAD_V1 PATCH FAILED model=" model " core=" core " pid=" pid " clean=" clean > "/dev/stderr"; exit 3 } }
++END { if (model != 1 || core != 1 || pid != 1 || clean != 1 || clock != 1) { print "TSP_DRAWTHREAD_V1 PATCH FAILED model=" model " core=" core " pid=" pid " clean=" clean " clock=" clock > "/dev/stderr"; exit 3 } }
+ EOF_AWK
+ }
+ 
+@@ -263,10 +309,11 @@
+ n_core=\$(grep -c '^[[:space:]]*tsp_cpu_optimize[[:space:]]*\$' "\$L")
+ n_pid=\$(grep -c 'OPENMW_PID=\\\$!' "\$L")
+ n_clean=\$(grep -c '^[[:space:]]*tsp_cpu_governor_restore 2>/dev/null || true[[:space:]]*\$' "\$L")
+-echo "  anchors: OSG_THREADING=SingleThreaded x\$n_model, tsp_cpu_optimize call x\$n_core, OPENMW_PID=\\\$! x\$n_pid, governor_restore in cleanup x\$n_clean (all need 1)"
+-if [ "\$n_model" != 1 ] || [ "\$n_core" != 1 ] || [ "\$n_pid" != 1 ] || [ "\$n_clean" != 1 ]; then
++n_boost=\$(grep -c '^[[:space:]]*tsp_cpu_governor_boost[[:space:]]*\$' "\$L")
++echo "  anchors: OSG_THREADING=SingleThreaded x\$n_model, tsp_cpu_optimize call x\$n_core, governor_boost call x\$n_boost, OPENMW_PID=\\\$! x\$n_pid, governor_restore in cleanup x\$n_clean (all need 1)"
++if [ "\$n_model" != 1 ] || [ "\$n_core" != 1 ] || [ "\$n_pid" != 1 ] || [ "\$n_clean" != 1 ] || [ "\$n_boost" != 1 ]; then
+     echo "  !! anchors not unique on \$NAME - launcher untouched. The lines in question:"
+-    grep -n 'OSG_THREADING=\|^[[:space:]]*tsp_cpu_optimize\|OPENMW_PID=\\\$!\|tsp_cpu_governor_restore 2>' "\$L" | sed 's/^/    /'
++    grep -n 'OSG_THREADING=\|^[[:space:]]*tsp_cpu_optimize\|^[[:space:]]*tsp_cpu_governor_boost\|OPENMW_PID=\\\$!\|tsp_cpu_governor_restore 2>' "\$L" | sed 's/^/    /'
+     exit 1
+ fi
+ mkdir -p "\$GAMEDIR/backups"
+@@ -277,7 +324,7 @@
+ sed -i '/^model=single/d' "\$POL" 2>/dev/null
+ echo "  patched \$L with $MARK  (\$(wc -l < "\$L") lines)  backup: \$GAMEDIR/backups/Morrowind.sh.before-drawthread-\$STAMP"
+ echo "  -- marker lines --"
+-grep -n '>>> TSP_DRAWTHREAD_V1\|TSP_DRAWTHREAD_V1 CLEAN\|export OSG_THREADING=' "\$L" | sed 's/^/    /'
++grep -n '>>> TSP_DRAWTHREAD_V1\|>>> TSP_CPUCLOCK_V1\|TSP_DRAWTHREAD_V1 CLEAN\|TSP_CPUCLOCK_V1 CLEAN\|export OSG_THREADING=' "\$L" | sed 's/^/    /'
+ echo "  policy: [\$(cat "\$POL" 2>/dev/null | tr '\\n' ' ')]  (empty = draw model, core+pin on)"
+ EOF_REMOTE
+         rc=$?
+@@ -316,7 +363,8 @@
+ NAME=\$1
+ echo "  launcher: \$L  marker=\$(grep -c $MARK "\$L")  ncpu=\$NCPU online=\$(cat /sys/devices/system/cpu/online 2>/dev/null)  policy=[\$(cat "\$POL" 2>/dev/null | tr '\\n' ' ')]"
+ for c in 0 4 5; do f=/sys/devices/system/cpu/cpu\$c/cpufreq; [ -d \$f ] && echo "  cpu\$c online=\$(cat /sys/devices/system/cpu/cpu\$c/online 2>/dev/null || echo 1) cur_khz=\$(cat \$f/scaling_cur_freq 2>/dev/null) gov=\$(cat \$f/scaling_governor 2>/dev/null)"; done
+-echo "  -- \$PROG (last 6 TSP_DRAWTHREAD_V1 lines: core / armed / samples) --"
++echo "  -- \$PROG (last TSP_CPUCLOCK_V1 line, then the last 6 TSP_DRAWTHREAD_V1 lines: core / armed / samples) --"
++grep TSP_CPUCLOCK_V1 "\$PROG" 2>/dev/null | tail -1 | sed 's/^/    /'
+ grep TSP_DRAWTHREAD_V1 "\$PROG" 2>/dev/null | tail -6 | sed 's/^/    /'
+ [ "\$(grep -c TSP_DRAWTHREAD_V1 "\$PROG" 2>/dev/null)" = 0 ] && echo "    (none: no launch since the patch, or the launcher never reached the launch line)"
+ LOG="\$GAMEDIR/openmw_log.txt"
+@@ -329,7 +377,11 @@
+ echo "  wait fields: main/draw mostly R = CPU-bound there; draw sleeping in a pvr/mali/fence/poll symbol = GPU-bound; futex = waiting on the other thread; a /IDLE thread at 100% = navmesh generating"
+     echo "  GL errors logged by openmw: \$(grep -c -i "GL error\|glGetError\|invalid operation" "\$LOG")   crashes: \$(grep -c -i "signal 11\|segfault\|Segmentation" "\$LOG")"
+ fi
++echo "  cpufreq now: cpu0 cur=\$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq 2>/dev/null) max=\$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq 2>/dev/null) ceiling=\$(cat /sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq 2>/dev/null) gov=\$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor 2>/dev/null)  (idle reading; khz= in a sample line is the in-game one)"
++echo "  display path: dri=[\$(ls /dev/dri 2>/dev/null | tr '\\n' ' ')] fb=[\$(ls /dev/fb* 2>/dev/null | tr '\\n' ' ')]"
++[ -r /sys/kernel/debug/dri/0/clients ] && { echo "  drm clients:"; head -8 /sys/kernel/debug/dri/0/clients | sed 's/^/    /'; }
+ P=\$(find_pid) || { echo "  game not running now - no live table (the sample lines above are the proof)"; exit 0; }
++echo "  game fds on the display: \$(ls -l /proc/\$P/fd 2>/dev/null | grep -o '/dev/dri/[a-z0-9]*\|/dev/fb[0-9]*' | sort | uniq -c | tr '\\n' ' ')"
+ echo "  -- LIVE: game running (pid \$P, OSG_THREADING in its env: \$(tr '\\000' '\\n' < /proc/\$P/environ 2>/dev/null | awk -F= '/^OSG_THREADING=/ {print \$2}')) - sampling 10s, keep moving --"
+ thread_sample "\$P" | sed 's/^/    /'
+ EOF_REMOTE

@@ -1,0 +1,352 @@
+--- Morrowind.sh.before-tsp-gpu-diag-v1
++++ Morrowind.sh
+@@ -2449,6 +2449,326 @@
+     done
+ }
+ 
++# >>> TSP_GPU_DIAG_BUNDLE_V1 BEGIN
++# Read-only/measurement-first diagnostics for the TSP/TSPS GPU + exterior-cell crash.
++# Modes are selected by $GAMEDIR/tsp_gpu_diag_mode.txt:
++#   off   = no added diagnostics
++#   core  = DEFAULT: 1 s memory/swap/vmstat trace + stall/crash snapshots + ring +
++#           hardware/marker census + GlobalMap report/dump hooks when compiled in
++#   fbo   = core + proven write-only gl4es FBO attachment log (FBODUMP)
++#   full  = fbo + old PASS/DRAWFBO probe when TSP_PASSSTATE_V5 is compiled in
++#
++# Deliberately NOT armed here: LIBGL_TSP_FBFLUSH / DT / unknown legacy TSP_STATE or
++# generic LIBGL_TSP_DIAG switches. Their recent source contract is not in the current
++# launcher/docs and some can alter timing/rendering. The marker census tells us what
++# survived so a missing instrument can be restored from backup instead of guessed.
++TSP_GPU_DIAG_MODE="${TSP_GPU_DIAG_MODE:-core}"
++TSP_GPU_DIAG_ROOT="$GAMEDIR/tsp_diag"
++TSP_GPU_DIAG_DIR="$TSP_GPU_DIAG_ROOT/latest"
++TSP_GPU_DIAG_SAMPLER_PID=""
++TSP_GPU_DIAG_STALL_PID=""
++TSP_GPU_DIAG_GPUCLASS="unknown"
++TSP_GPU_DIAG_STALL_SECS="${TSP_GPU_DIAG_STALL_SECS:-8}"
++
++# One-time setup per launcher process. Internal-resolution auto-restarts reuse the
++# same run directory rather than rotating away the evidence from the first process.
++tsp_gpu_diag_init() {
++    [ "${TSP_GPU_DIAG_INITIALIZED:-0}" = 1 ] && return 0
++    TSP_GPU_DIAG_INITIALIZED=1
++
++    if [ -r "$GAMEDIR/tsp_gpu_diag_mode.txt" ]; then
++        _tspdm=""; IFS= read -r _tspdm < "$GAMEDIR/tsp_gpu_diag_mode.txt" 2>/dev/null || _tspdm=""
++        [ -n "$_tspdm" ] && TSP_GPU_DIAG_MODE=$_tspdm
++    fi
++    case "$TSP_GPU_DIAG_MODE" in off|core|fbo|full) ;; *) TSP_GPU_DIAG_MODE=core ;; esac
++    export TSP_GPU_DIAG_MODE
++    [ "$TSP_GPU_DIAG_MODE" = off ] && { echo "TSP_GPU_DIAG_BUNDLE_V1 off"; return 0; }
++
++    mkdir -p "$TSP_GPU_DIAG_ROOT" 2>/dev/null || return 0
++    rm -rf "$TSP_GPU_DIAG_ROOT/previous" 2>/dev/null || true
++    [ ! -d "$TSP_GPU_DIAG_DIR" ] || mv "$TSP_GPU_DIAG_DIR" "$TSP_GPU_DIAG_ROOT/previous" 2>/dev/null || true
++    mkdir -p "$TSP_GPU_DIAG_DIR/ring" 2>/dev/null || return 0
++
++    if [ -e /sys/devices/platform/gpu/scenectrl/command ]; then
++        TSP_GPU_DIAG_GPUCLASS=powervr-tsp
++    elif [ -d /sys/class/misc/mali0 ]; then
++        TSP_GPU_DIAG_GPUCLASS=mali-tsps
++    else
++        for _tspg in /sys/class/devfreq/*gpu*; do
++            if [ -e "$_tspg" ]; then TSP_GPU_DIAG_GPUCLASS=mali-tsps; break; fi
++        done
++    fi
++    export TSP_GPU_DIAG_GPUCLASS
++
++    {
++        echo "TSP_GPU_DIAG_BUNDLE_V1"
++        echo "date=$(date 2>/dev/null)"
++        echo "mode=$TSP_GPU_DIAG_MODE"
++        echo "gpu_class=$TSP_GPU_DIAG_GPUCLASS"
++        echo "cfw=${CFW_NAME:-unknown}"
++        echo "device_name=${DEVICE_NAME:-unknown}"
++        echo "device_cpu=${DEVICE_CPU:-unknown}"
++        echo "device_arch=${DEVICE_ARCH:-unknown}"
++        echo "kernel=$(uname -a 2>/dev/null)"
++        echo "openmw=$OPENMW_BIN"
++        echo "gl4es=$TSP_GL4ES_LIBRARY"
++        if command -v sha256sum >/dev/null 2>&1; then
++            [ -r "$OPENMW_BIN" ] && sha256sum "$OPENMW_BIN" 2>/dev/null
++            [ -r "$TSP_GL4ES_LIBRARY" ] && sha256sum "$TSP_GL4ES_LIBRARY" 2>/dev/null
++        fi
++        echo "--- device-tree compatible ---"
++        [ -r /proc/device-tree/compatible ] && tr '\000' '\n' < /proc/device-tree/compatible 2>/dev/null
++        echo "--- cpuinfo ---"
++        [ -r /proc/cpuinfo ] && cat /proc/cpuinfo
++        echo "--- meminfo ---"
++        [ -r /proc/meminfo ] && cat /proc/meminfo
++        echo "--- swaps ---"
++        [ -r /proc/swaps ] && cat /proc/swaps
++        echo "--- PowerVR/scenectrl ---"
++        for _tspf in /sys/devices/platform/gpu/scenectrl/command /sys/devices/platform/gpu/scenectrl/status; do
++            [ -r "$_tspf" ] && { printf '%s=' "$_tspf"; cat "$_tspf"; }
++        done
++        echo "--- GPU devfreq ---"
++        for _tspd in /sys/class/devfreq/*gpu*; do
++            [ -d "$_tspd" ] || continue
++            echo "node=$_tspd"
++            for _tspf in governor cur_freq min_freq max_freq available_frequencies available_governors; do
++                [ -r "$_tspd/$_tspf" ] && { printf '%s=' "$_tspf"; cat "$_tspd/$_tspf"; }
++            done
++        done
++        [ -r /sys/class/misc/mali0/device/power_policy ] && { printf 'mali_power_policy='; cat /sys/class/misc/mali0/device/power_policy; }
++    } > "$TSP_GPU_DIAG_DIR/hardware.txt" 2>&1
++
++    {
++        echo '# Marker census is a STRING census, not proof that a comment-only patch is absent.'
++        echo '# component marker count'
++        for _tspm in TSP_MAXCOLORATTACH TSP_PASSSTATE_V5 LIBGL_TSP_FBODUMP LIBGL_TSP_FBOSNAP; do
++            _tspn=$(grep -a -c "$_tspm" "$TSP_GL4ES_LIBRARY" 2>/dev/null || true)
++            echo "gl4es $_tspm ${_tspn:-0}"
++        done
++        for _tspm in TSP_RTT_INIT_TEXTURE_V55 TSP_GMAP_MEM_V1 TSP_GMAP_DUMP_V1 TSP_GMAP_REPAIR_V1 TSP_GMAP_CAMERA_DRAIN_V1 TSP_GLOBALMAP_DEPTH; do
++            _tspn=$(grep -a -c "$_tspm" "$OPENMW_BIN" 2>/dev/null || true)
++            echo "openmw $_tspm ${_tspn:-0}"
++        done
++        echo '# dormant legacy names in selected gl4es:'
++        for _tspm in LIBGL_TSP_DIAG LIBGL_TSP_WATCH LIBGL_TSP_WATCH_FBONLY LIBGL_TSP_FBFLUSH LIBGL_TSP_DT; do
++            _tspn=$(grep -a -c "$_tspm" "$TSP_GL4ES_LIBRARY" 2>/dev/null || true)
++            echo "gl4es $_tspm ${_tspn:-0}"
++        done
++    } > "$TSP_GPU_DIAG_DIR/markers.txt" 2>&1
++
++    {
++        echo "START $(date 2>/dev/null) mode=$TSP_GPU_DIAG_MODE gpu=$TSP_GPU_DIAG_GPUCLASS"
++        echo "gl4es=$TSP_GL4ES_LIBRARY"
++    } > "$TSP_GPU_DIAG_DIR/events.log"
++    echo "TSP_GPU_DIAG_BUNDLE_V1 mode=$TSP_GPU_DIAG_MODE gpu=$TSP_GPU_DIAG_GPUCLASS out=$TSP_GPU_DIAG_DIR"
++}
++
++# Re-arm variables after the shipping launcher deliberately unsets its dormant
++# diagnostic knobs on every internal-resolution restart.
++tsp_gpu_diag_arm() {
++    [ "$TSP_GPU_DIAG_MODE" = off ] && return 0
++
++    # OpenMW TSP lines such as TSP_GMAP_MEM_V1 are Info-level in known builds.
++    export OPENMW_DEBUG_LEVEL=info
++
++    # Existing frame-ring profiler: useful if the transition freeze starts as long frames.
++    export OPENMW_TSP_RING="$TSP_GPU_DIAG_DIR/ring"
++    export OPENMW_TSP_RING_TRIGGER_MS=60
++    export OPENMW_TSP_RING_MAX_DUMPS=24
++
++    # Global-map detector stays REPORT ONLY. Never arm repair mode 2 automatically.
++    if grep -a -q 'TSP_GMAP_REPAIR' "$OPENMW_BIN" 2>/dev/null; then
++        export TSP_GMAP_REPAIR=1
++    fi
++    if grep -a -q 'TSP_GMAP_DUMP' "$OPENMW_BIN" 2>/dev/null; then
++        export TSP_GMAP_DUMP="$TSP_GPU_DIAG_DIR/globalmap_overlay.png"
++    fi
++
++    case "$TSP_GPU_DIAG_MODE" in
++        fbo|full)
++            # TSP_MAXCOLORATTACH uses the gl4es diagnostic logger in known builds.
++            # Keep it out of the long core run so logging cannot distort the crash timing.
++            export LIBGL_TSP_LOG=1
++            # Proven write-to-file attachment log. It does not alter rendering.
++            export LIBGL_TSP_FBODUMP=1
++            export LIBGL_TSP_FBOPATH="$TSP_GPU_DIAG_DIR/fbo.txt"
++            ;;
++        *)
++            unset LIBGL_TSP_LOG
++            unset LIBGL_TSP_FBODUMP
++            unset LIBGL_TSP_FBOPATH
++            ;;
++    esac
++
++    case "$TSP_GPU_DIAG_MODE" in
++        full)
++            # The V5 instrument gives PASS/DRAWFBO state. Its old PPM readback is
++            # known invalid on this port; only the textual probe is evidence.
++            if grep -a -q 'TSP_PASSSTATE_V5' "$TSP_GL4ES_LIBRARY" 2>/dev/null; then
++                export LIBGL_TSP_FBOSNAP=1
++            else
++                unset LIBGL_TSP_FBOSNAP
++                echo "MISSING TSP_PASSSTATE_V5: restore instrumented gl4es from backup for full mode" >> "$TSP_GPU_DIAG_DIR/events.log"
++            fi
++            ;;
++        *) unset LIBGL_TSP_FBOSNAP ;;
++    esac
++}
++
++# 1-second low-overhead trace. The hot loop uses shell reads only; no awk/cat/date.
++# It records enough to distinguish process growth, anonymous swap-out, page-cache
++# collapse, direct reclaim and loop-swap I/O.
++tsp_gpu_diag_sampler() {
++    _tsppid=$1; _tspout="$TSP_GPU_DIAG_DIR/memory.tsv"; _tspt=0
++    {
++        printf '# t rss_kb vsz_kb vmdata_kb vmswap_kb rssanon_kb rssfile_kb rssshmem_kb threads memavail_kb memfree_kb cached_kb sreclaim_kb shmem_kb swaptotal_kb swapfree_kb swapcached_kb dirty_kb writeback_kb cmatotal_kb cmafree_kb psi_cpu psi_mem psi_io state minflt majflt utime stime pswpin pswpout pgmajfault pgscan_kswapd pgscan_direct pgsteal_kswapd pgsteal_direct oom_kill read_bytes write_bytes loop_read_sectors loop_write_sectors\n'
++    } > "$_tspout"
++    while kill -0 "$_tsppid" 2>/dev/null; do
++        RSS=na; VSZ=na; VDATA=na; VSWAP=na; RANON=na; RFILE=na; RSHM=na; THR=na
++        while read -r _k _v _u; do
++            case "$_k" in
++                VmRSS:) RSS=$_v ;; VmSize:) VSZ=$_v ;; VmData:) VDATA=$_v ;; VmSwap:) VSWAP=$_v ;;
++                RssAnon:) RANON=$_v ;; RssFile:) RFILE=$_v ;; RssShmem:) RSHM=$_v ;; Threads:) THR=$_v ;;
++            esac
++        done < "/proc/$_tsppid/status" 2>/dev/null
++
++        MA=na; MF=na; CA=na; SR=na; SH=na; STOT=na; SFREE=na; SC=na; DIRTY=na; WB=na; CT=na; CF=na
++        while read -r _k _v _u; do
++            case "$_k" in
++                MemAvailable:) MA=$_v ;; MemFree:) MF=$_v ;; Cached:) CA=$_v ;; SReclaimable:) SR=$_v ;; Shmem:) SH=$_v ;;
++                SwapTotal:) STOT=$_v ;; SwapFree:) SFREE=$_v ;; SwapCached:) SC=$_v ;; Dirty:) DIRTY=$_v ;; Writeback:) WB=$_v ;;
++                CmaTotal:) CT=$_v ;; CmaFree:) CF=$_v ;;
++            esac
++        done < /proc/meminfo
++
++        PC=na; PM=na; PI=na
++        if [ -r /proc/pressure/cpu ]; then while read -r _kind _rest; do case "$_kind" in some) set -- $_rest; PC=${1#avg10=} ;; esac; done < /proc/pressure/cpu; fi
++        if [ -r /proc/pressure/memory ]; then while read -r _kind _rest; do case "$_kind" in some) set -- $_rest; PM=${1#avg10=} ;; esac; done < /proc/pressure/memory; fi
++        if [ -r /proc/pressure/io ]; then while read -r _kind _rest; do case "$_kind" in some) set -- $_rest; PI=${1#avg10=} ;; esac; done < /proc/pressure/io; fi
++
++        PST=na; MINF=na; MAJF=na; UT=na; ST=na
++        read -r _ _ PST _ _ _ _ _ _ MINF _ MAJF _ UT ST _ < "/proc/$_tsppid/stat" 2>/dev/null || true
++
++        SWI=0; SWO=0; PGMAJ=0; PGSK=0; PGSD=0; PGSTK=0; PGSTD=0; OOM=0
++        while read -r _k _v; do
++            case "$_k" in
++                pswpin) SWI=$_v ;; pswpout) SWO=$_v ;; pgmajfault) PGMAJ=$_v ;; oom_kill) OOM=$_v ;;
++                pgscan_kswapd*) PGSK=$((PGSK + _v)) ;; pgscan_direct*) PGSD=$((PGSD + _v)) ;;
++                pgsteal_kswapd*) PGSTK=$((PGSTK + _v)) ;; pgsteal_direct*) PGSTD=$((PGSTD + _v)) ;;
++            esac
++        done < /proc/vmstat
++
++        RB=na; WBIO=na
++        if [ -r "/proc/$_tsppid/io" ]; then
++            while read -r _k _v; do case "$_k" in read_bytes:) RB=$_v ;; write_bytes:) WBIO=$_v ;; esac; done < "/proc/$_tsppid/io"
++        fi
++
++        LRS=na; LWS=na
++        if [ -r /proc/swaps ]; then
++            while read -r _sw _rest; do
++                case "$_sw" in
++                    Filename|'') continue ;;
++                    /dev/loop*)
++                        _blk=${_sw#/dev/}
++                        if [ -r "/sys/block/$_blk/stat" ]; then
++                            read -r _ _ LRS _ _ _ LWS _ _ _ _ _ < "/sys/block/$_blk/stat" 2>/dev/null || true
++                        fi
++                        break ;;
++                esac
++            done < /proc/swaps
++        fi
++
++        printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
++            "$_tspt" "$RSS" "$VSZ" "$VDATA" "$VSWAP" "$RANON" "$RFILE" "$RSHM" "$THR" "$MA" "$MF" "$CA" "$SR" "$SH" "$STOT" "$SFREE" "$SC" "$DIRTY" "$WB" "$CT" "$CF" "$PC" "$PM" "$PI" "$PST" "$MINF" "$MAJF" "$UT" "$ST" "$SWI" "$SWO" "$PGMAJ" "$PGSK" "$PGSD" "$PGSTK" "$PGSTD" "$OOM" "$RB" "$WBIO" "$LRS" "$LWS" >> "$_tspout"
++        _tspt=$((_tspt + 1)); sleep 1
++    done
++    printf '# stopped t=%s\n' "$_tspt" >> "$_tspout"
++}
++
++tsp_gpu_diag_snapshot() {
++    _tsptag=$1; _tsppid=${2:-}; _tspfile="$TSP_GPU_DIAG_DIR/${_tsptag}.txt"
++    {
++        echo "tag=$_tsptag date=$(date 2>/dev/null) pid=${_tsppid:-none} mode=$TSP_GPU_DIAG_MODE gpu=$TSP_GPU_DIAG_GPUCLASS"
++        echo '--- uptime ---'; [ -r /proc/uptime ] && cat /proc/uptime
++        echo '--- meminfo ---'; [ -r /proc/meminfo ] && cat /proc/meminfo
++        echo '--- swaps ---'; [ -r /proc/swaps ] && cat /proc/swaps
++        echo '--- vmstat ---'; [ -r /proc/vmstat ] && cat /proc/vmstat
++        echo '--- pressure ---'
++        for _tspf in /proc/pressure/cpu /proc/pressure/memory /proc/pressure/io; do [ -r "$_tspf" ] && { echo "[$_tspf]"; cat "$_tspf"; }; done
++        if [ -n "$_tsppid" ] && [ -d "/proc/$_tsppid" ]; then
++            echo '--- process status ---'; cat "/proc/$_tsppid/status" 2>/dev/null
++            echo '--- process io ---'; cat "/proc/$_tsppid/io" 2>/dev/null
++            echo '--- process smaps_rollup ---'; cat "/proc/$_tsppid/smaps_rollup" 2>/dev/null
++            echo '--- threads state/wchan ---'
++            for _tsptd in /proc/"$_tsppid"/task/[0-9]*; do
++                [ -d "$_tsptd" ] || continue; _tsptid=${_tsptd##*/}; _tspcomm=""; _tspstate=""; _tspwch=""
++                [ -r "$_tsptd/comm" ] && IFS= read -r _tspcomm < "$_tsptd/comm"
++                if [ -r "$_tsptd/status" ]; then while read -r _k _v _x; do case "$_k" in State:) _tspstate="$_v $_x"; break ;; esac; done < "$_tsptd/status"; fi
++                [ -r "$_tsptd/wchan" ] && IFS= read -r _tspwch < "$_tsptd/wchan"
++                echo "tid=$_tsptid state=$_tspstate wchan=$_tspwch comm=$_tspcomm"
++            done
++        fi
++        echo '--- gpu knobs ---'
++        for _tspf in /sys/devices/platform/gpu/scenectrl/command /sys/devices/platform/gpu/scenectrl/status /sys/class/misc/mali0/device/power_policy; do
++            [ -r "$_tspf" ] && { printf '%s=' "$_tspf"; cat "$_tspf"; }
++        done
++        for _tspd in /sys/class/devfreq/*gpu*; do
++            [ -d "$_tspd" ] || continue; echo "node=$_tspd"
++            for _tspf in governor cur_freq min_freq max_freq; do [ -r "$_tspd/$_tspf" ] && { printf '%s=' "$_tspf"; cat "$_tspd/$_tspf"; }; done
++        done
++        for _tspf in /proc/pvr/status /proc/pvr/meminfo /proc/pvr/version /sys/kernel/debug/pvr/status /sys/kernel/debug/pvr/meminfo; do
++            [ -r "$_tspf" ] && { echo "[$_tspf]"; cat "$_tspf"; }
++        done
++        echo '--- dmesg tail ---'
++        dmesg 2>/dev/null | tail -n 300 2>/dev/null || true
++    } > "$_tspfile" 2>&1
++}
++
++# Detect a process that remains alive but stops accumulating CPU ticks. This is
++# intentionally independent of OpenMW so it can still capture /proc + dmesg when
++# the render thread or GPU driver wedges.
++tsp_gpu_diag_stallwatch() {
++    _tsppid=$1; _tsplast=-1; _tspstill=0; _tsparmed=1; _tspseq=0
++    while kill -0 "$_tsppid" 2>/dev/null; do
++        _tsput=0; _tspst=0
++        read -r _ _ _ _ _ _ _ _ _ _ _ _ _ _tsput _tspst _ < "/proc/$_tsppid/stat" 2>/dev/null || break
++        _tspticks=$((_tsput + _tspst))
++        if [ "$_tspticks" = "$_tsplast" ]; then _tspstill=$((_tspstill + 1)); else _tspstill=0; _tsparmed=1; fi
++        if [ "$_tspstill" -ge "$TSP_GPU_DIAG_STALL_SECS" ] 2>/dev/null && [ "$_tsparmed" = 1 ]; then
++            _tspseq=$((_tspseq + 1)); _tsparmed=0
++            echo "STALL $(date 2>/dev/null) seq=$_tspseq no_cpu_tick_seconds=$_tspstill" >> "$TSP_GPU_DIAG_DIR/events.log"
++            tsp_gpu_diag_snapshot "stall-$_tspseq" "$_tsppid"
++            sync
++        fi
++        _tsplast=$_tspticks; sleep 1
++    done
++}
++
++tsp_gpu_diag_start() {
++    _tsppid=$1; [ "$TSP_GPU_DIAG_MODE" = off ] && return 0
++    tsp_gpu_diag_snapshot prelaunch "$_tsppid"
++    tsp_gpu_diag_sampler "$_tsppid" & TSP_GPU_DIAG_SAMPLER_PID=$!
++    tsp_gpu_diag_stallwatch "$_tsppid" & TSP_GPU_DIAG_STALL_PID=$!
++    echo "PID $(date 2>/dev/null) openmw=$_tsppid sampler=$TSP_GPU_DIAG_SAMPLER_PID stallwatch=$TSP_GPU_DIAG_STALL_PID" >> "$TSP_GPU_DIAG_DIR/events.log"
++}
++
++tsp_gpu_diag_stop() {
++    _tspexit=${1:-unknown}; [ "$TSP_GPU_DIAG_MODE" = off ] && return 0
++    for _tspp in "$TSP_GPU_DIAG_SAMPLER_PID" "$TSP_GPU_DIAG_STALL_PID"; do
++        [ -n "$_tspp" ] || continue; kill "$_tspp" 2>/dev/null || true; wait "$_tspp" 2>/dev/null || true
++    done
++    TSP_GPU_DIAG_SAMPLER_PID=""; TSP_GPU_DIAG_STALL_PID=""
++    echo "EXIT $(date 2>/dev/null) code=$_tspexit" >> "$TSP_GPU_DIAG_DIR/events.log"
++    tsp_gpu_diag_snapshot postexit ""
++    for _tspl in "$CONFIG_DIR/openmw.log" "$CONFIG_DIR/openmw/openmw.log" "$LOG_FILE"; do
++        [ -s "$_tspl" ] || continue
++        _tspbn=${_tspl##*/}; cp -f "$_tspl" "$TSP_GPU_DIAG_DIR/${_tspbn}.final" 2>/dev/null || true
++    done
++    sync
++}
++# <<< TSP_GPU_DIAG_BUNDLE_V1 END
++
+ # TSP_SWAP_V1
+ # The 0-1 fps stalls on this port are page-cache thrash, confirmed by
+ # measurement: 997 major faults in a 10-second window during a stall versus 0
+@@ -2674,6 +2994,10 @@
+ unset LIBGL_TSP_DIAG_MAX
+ export LIBGL_TSP_DERIVATIVES=1
+ export LIBGL_FBCONVERT=1
++    # TSP_GPU_DIAG_BUNDLE_V1: initialize once, then re-arm after the shipping
++    # diagnostic-unset block on every internal-resolution restart.
++    tsp_gpu_diag_init
++    tsp_gpu_diag_arm
+     tsp_setup_swap
+ # >>> TSP_DRAWTHREAD_V1 CORE BEGIN
+ # With DrawThreadPerContext the OSG draw thread is as hot as the main thread and needs a fast core of its
+@@ -2919,9 +3243,11 @@
+ echo "Performance monitor pid: $TSP_PERF_MONITOR_PID"
+ # <<< TSP_V36_PERF_MONITOR_START END
+     echo "OpenMW pid: $OPENMW_PID"
++    tsp_gpu_diag_start "$OPENMW_PID"
+ 
+     wait "$OPENMW_PID"
+     OPENMW_EXIT_CODE=$?
++    tsp_gpu_diag_stop "$OPENMW_EXIT_CODE"
+     tsp_lever_restore 2>/dev/null || true
+ # >>> TSP_V36_PERF_MONITOR_STOP BEGIN
+ if [ -n "${TSP_PERF_MONITOR_PID:-}" ]; then

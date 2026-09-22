@@ -1,0 +1,17 @@
+diff --git a/apps/openmw/engine.cpp b/apps/openmw/engine.cpp
+index 55b8a8f..f2418c5 100644
+--- a/apps/openmw/engine.cpp
++++ b/apps/openmw/engine.cpp
+@@ -151,6 +151,12 @@ namespace
+             Log(Debug::Info) << "OpenGL Renderer: " << glGetString(GL_RENDERER);
+             Log(Debug::Info) << "OpenGL Version: " << glGetString(GL_VERSION);
+             glGetIntegerv(GL_MAX_TEXTURE_IMAGE_UNITS, &mMaxTextureImageUnits);
++            if (mMaxTextureImageUnits <= 0)
++            {
++                Log(Debug::Warning) << "GL_MAX_TEXTURE_IMAGE_UNITS returned " << mMaxTextureImageUnits
++                                    << "; using GLES2 minimum fallback of 8";
++                mMaxTextureImageUnits = 8;
++            }
+         }
+ 
+         int getMaxTextureImageUnits() const

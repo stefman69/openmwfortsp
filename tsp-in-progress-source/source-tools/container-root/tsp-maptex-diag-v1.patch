@@ -1,0 +1,426 @@
+--- a/gl4es-tsps/src/gl/texture.h
++++ b/gl4es-tsps/src/gl/texture.h
+@@ -152,11 +152,22 @@
+     GLuint renderdepth; // in case renderbuffer where used instead...
+     GLuint renderstencil;
+     int     trace;  // internal use for debug
++    /* TSP_TEXLIFE_V1: diagnostic-only persistence flag for map/PBO/FBO textures. */
++    int     tsp_life;
+     GLvoid *data;	// in case we want to keep a copy of it (it that case, always RGBA/GL_UNSIGNED_BYTE
+     glsampler_t sampler;    // internal sampler if not superseded by glBindSampler
+     glsampler_t actual;     // actual sampler
+     float fbtex_ratio; // Lower rendering resolution
+ } gltexture_t;
++
++/* TSP_TEXLIFE_V1 -- low-overhead resource lifetime trace, armed only when
++ * LIBGL_TSP_TEXLIFE is set or the existing FBO diagnostic path is active. */
++void tsp_texlife_created(gltexture_t* tex);
++void tsp_texlife_deleted(gltexture_t* tex);
++void tsp_texlife_image(const char* op, gltexture_t* tex, GLint level,
++                       GLsizei width, GLsizei height, GLenum format, GLenum type,
++                       const GLvoid* data, glbuffer_t* unpack);
++void tsp_texlife_attach(const char* op, gltexture_t* tex, GLuint fbo, GLenum attachment);
+ 
+ KHASH_MAP_DECLARE_INT(tex, gltexture_t *);
+ 
+--- a/gl4es-tsps/src/gl/texture_params.c
++++ b/gl4es-tsps/src/gl/texture_params.c
+@@ -1,4 +1,10 @@
+ #include "texture.h"
++
++#include <stdint.h>
++#include <stdarg.h>
++#include <stdio.h>
++#include <stdlib.h>
++#include <sys/time.h>
+ 
+ #include "../glx/hardext.h"
+ #include "../glx/streaming.h"
+@@ -15,6 +21,175 @@
+ #include "matrix.h"
+ #include "pixel.h"
+ #include "raster.h"
++
++/* TSP_TEXLIFE_V1 ----------------------------------------------------------
++ * Resource-accounting trace for the PowerVR map investigation.
++ * Dormant in normal play. Existing fbo/full diagnostic mode supplies
++ * LIBGL_TSP_FBOPATH, so the trace appears beside fbo.txt as fbo.txt.texlife.
++ */
++static FILE* tsp_texlife_file(void)
++{
++    static int checked = 0;
++    static FILE* f = NULL;
++    static char derived[1024];
++    if (!checked)
++    {
++        checked = 1;
++        const char* path = getenv("LIBGL_TSP_TEXLIFE");
++        if (!path || !path[0])
++        {
++            const char* fbo = getenv("LIBGL_TSP_FBOPATH");
++            if (fbo && fbo[0])
++            {
++                snprintf(derived, sizeof(derived), "%s.texlife", fbo);
++                path = derived;
++            }
++        }
++        if (path && path[0])
++        {
++            f = fopen(path, "w");
++            if (f)
++            {
++                setvbuf(f, NULL, _IOLBF, 0);
++                fprintf(f, "# TSP_TEXLIFE_V1 epoch_ms op fields\n");
++            }
++        }
++    }
++    return f;
++}
++
++static unsigned long tsp_texlife_live = 0;
++static unsigned long tsp_texlife_created_count = 0;
++static unsigned long tsp_texlife_deleted_count = 0;
++static unsigned long tsp_texlife_seq = 0;
++
++static unsigned long long tsp_texlife_epoch_ms(void)
++{
++    struct timeval tv;
++    gettimeofday(&tv, NULL);
++    return (unsigned long long)tv.tv_sec * 1000ULL
++        + (unsigned long long)(tv.tv_usec / 1000);
++}
++
++static unsigned long tsp_texlife_hash_pbo(glbuffer_t* unpack, const GLvoid* data)
++{
++    if (!unpack || !unpack->data || unpack->size <= 0)
++        return 0;
++    uintptr_t off = (uintptr_t)data;
++    if (off >= (uintptr_t)unpack->size)
++        return 0;
++    size_t n = (size_t)unpack->size - (size_t)off;
++    if (n > 4096)
++        n = 4096;
++    const unsigned char* b = (const unsigned char*)unpack->data + off;
++    unsigned long h = 2166136261u;
++    for (size_t i = 0; i < n; ++i)
++        h = (h ^ b[i]) * 16777619u;
++    return h;
++}
++
++static int tsp_texlife_dim(int w, int h)
++{
++    if ((w == 256 && h == 256)
++        || (w == 512 && h == 1024)
++        || (w == 1024 && h == 512))
++        return 1;
++    if (w >= 900 && h >= 800)
++        return 1;
++    return 0;
++}
++
++static void tsp_texlife_printf(const char* fmt, ...)
++{
++    FILE* f = tsp_texlife_file();
++    if (!f)
++        return;
++    fprintf(f, "%llu seq=%lu ", tsp_texlife_epoch_ms(), ++tsp_texlife_seq);
++    va_list ap;
++    va_start(ap, fmt);
++    vfprintf(f, fmt, ap);
++    va_end(ap);
++    fputc('\n', f);
++}
++
++void tsp_texlife_created(gltexture_t* tex)
++{
++    if (!tex)
++        return;
++    ++tsp_texlife_live;
++    ++tsp_texlife_created_count;
++    if (tsp_texlife_created_count <= 16
++        || (tsp_texlife_created_count & 255UL) == 0)
++        tsp_texlife_printf(
++            "SUMMARY cause=create live=%lu created=%lu deleted=%lu id=%u gl=%u",
++            tsp_texlife_live, tsp_texlife_created_count,
++            tsp_texlife_deleted_count, tex->texture, tex->glname);
++}
++
++void tsp_texlife_deleted(gltexture_t* tex)
++{
++    if (!tex)
++        return;
++    if (tex->tsp_life)
++        tsp_texlife_printf(
++            "DELETE live_before=%lu id=%u gl=%u size=%dx%d native=%dx%d "
++            "fmt=0x%x type=0x%x fbo=%d att=0x%x",
++            tsp_texlife_live, tex->texture, tex->glname,
++            tex->width, tex->height, tex->nwidth, tex->nheight,
++            tex->format, tex->type, tex->binded_fbo, tex->binded_attachment);
++    if (tsp_texlife_live)
++        --tsp_texlife_live;
++    ++tsp_texlife_deleted_count;
++    if (tex->tsp_life || (tsp_texlife_deleted_count & 255UL) == 0)
++        tsp_texlife_printf(
++            "SUMMARY cause=delete live=%lu created=%lu deleted=%lu",
++            tsp_texlife_live, tsp_texlife_created_count,
++            tsp_texlife_deleted_count);
++}
++
++void tsp_texlife_image(const char* op, gltexture_t* tex, GLint level,
++                       GLsizei width, GLsizei height, GLenum format, GLenum type,
++                       const GLvoid* data, glbuffer_t* unpack)
++{
++    if (!tex)
++        return;
++    if (level == 0
++        && (unpack || tex->binded_fbo
++            || tsp_texlife_dim(width, height)
++            || tsp_texlife_dim(tex->width, tex->height)))
++        tex->tsp_life = 1;
++    if (!tex->tsp_life && !unpack)
++        return;
++
++    tsp_texlife_printf(
++        "%s id=%u gl=%u level=%d in=%dx%d tex=%dx%d native=%dx%d "
++        "fmt=0x%x type=0x%x src=%p pbo=%u pbo_size=%ld pbo_off=%lu "
++        "pbo_hash=%lu fbo=%d att=0x%x live=%lu",
++        op, tex->texture, tex->glname, level, width, height,
++        tex->width, tex->height, tex->nwidth, tex->nheight,
++        format, type, data,
++        unpack ? unpack->buffer : 0,
++        unpack ? (long)unpack->size : 0L,
++        unpack ? (unsigned long)(uintptr_t)data : 0UL,
++        tsp_texlife_hash_pbo(unpack, data),
++        tex->binded_fbo, tex->binded_attachment, tsp_texlife_live);
++}
++
++void tsp_texlife_attach(const char* op, gltexture_t* tex,
++                        GLuint fbo, GLenum attachment)
++{
++    if (!tex)
++        return;
++    tex->tsp_life = 1;
++    tsp_texlife_printf(
++        "%s id=%u gl=%u fbo=%u att=0x%x size=%dx%d native=%dx%d "
++        "fmt=0x%x type=0x%x live=%lu",
++        op, tex->texture, tex->glname, fbo, attachment,
++        tex->width, tex->height, tex->nwidth, tex->nheight,
++        tex->format, tex->type, tsp_texlife_live);
++}
++/* ----------------------------------------------------------------------- */
+ 
+ KHASH_MAP_IMPL_INT(tex, gltexture_t *);
+ 
+@@ -177,6 +352,7 @@
+         tex->type = GL_UNSIGNED_BYTE;
+         tex->inter_format = GL_RGBA;
+         tex->inter_type = GL_UNSIGNED_BYTE;
++        tsp_texlife_created(tex);
+     } else {
+         tex = kh_value(list, k);
+     }
+@@ -420,6 +596,7 @@
+                     if(found)
+                         glstate->bound_changed = a+1;
+                 }
++                tsp_texlife_deleted(tex);
+                 gles_glDeleteTextures(1, &tex->glname);
+                 // check if renderbuffer where associeted
+                 if(tex->binded_fbo) {
+@@ -484,6 +661,7 @@
+             tex->type = GL_UNSIGNED_BYTE;
+             tex->inter_format = GL_RGBA;
+             tex->inter_type = GL_UNSIGNED_BYTE;
++            tsp_texlife_created(tex);
+         } else {
+             tex = kh_value(list, k);
+             // in case of no delete here...
+--- a/gl4es-tsps/src/gl/texture.c
++++ b/gl4es-tsps/src/gl/texture.c
+@@ -972,6 +972,8 @@
+     noerrorShim();
+ 
+     gltexture_t *bound = glstate->texture.bound[glstate->texture.active][itarget];
++    tsp_texlife_image("IMG_BEGIN", bound, level, width, height,
++        format, type, data, glstate->vao->unpack);
+ 
+     //Special case when resizing an attached to FBO texture, that is attached to depth and/or stencil => resizing is specific then
+     if(bound->binded_fbo && (bound->binded_attachment==GL_DEPTH_ATTACHMENT || bound->binded_attachment==GL_STENCIL_ATTACHMENT || bound->binded_attachment==GL_DEPTH_STENCIL_ATTACHMENT))
+@@ -1535,6 +1537,8 @@
+     if (pixels != datab) {
+         free(pixels);
+     }
++    tsp_texlife_image("IMG_END", bound, level, width, height,
++        format, type, data, glstate->vao->unpack);
+     // update max bound to be sure "sampler" is applied
+     if(glstate->bound_changed<glstate->texture.active+1)
+         glstate->bound_changed = glstate->texture.active+1;
+@@ -1571,6 +1575,8 @@
+     }
+     
+     gltexture_t *bound = glstate->texture.bound[glstate->texture.active][itarget];
++    tsp_texlife_image("SUB_BEGIN", bound, level, width, height,
++        format, type, data, glstate->vao->unpack);
+     if (globals4es.automipmap) {
+         if (level>0)
+             if ((globals4es.automipmap==1) || (globals4es.automipmap==3) || bound->mipmap_need) {
+@@ -1789,6 +1795,8 @@
+ 
+     if (pixels != datab)
+         free((GLvoid *)pixels);
++    tsp_texlife_image("SUB_END", bound, level, width, height,
++        format, type, data, glstate->vao->unpack);
+ }
+ 
+ // 1d stubs
+--- a/gl4es-tsps/src/gl/framebuffers.c
++++ b/gl4es-tsps/src/gl/framebuffers.c
+@@ -797,6 +797,7 @@
+         gltexture_t* old = gl4es_getTexture(old_attachment_type, old_attachment);
+         if(old) {
+             DBG(printf("Detach Texture %d from FBO %d as Attachement %s\n", old->glname, old->binded_fbo, PrintEnum(old->binded_attachment));)
++            tsp_texlife_attach("DETACH", old, 0, 0);
+             old->binded_fbo = 0;
+             old->binded_attachment = 0;
+         } else {
+@@ -808,6 +809,7 @@
+         DBG(printf("Attach Texture %d to FBO %d as Attachement %s\n", tex->glname, fb->id, PrintEnum(attachment));)
+         tex->binded_fbo = fb->id;
+         tex->binded_attachment = attachment;
++        tsp_texlife_attach("ATTACH", tex, fb->id, attachment);
+     }
+ 
+     if (0) /* TSP_FBO_ALWAYS_REATTACH_20260824 - see tag below */
+--- a/openmw-0.51-tsp-src/apps/openmw/mwrender/localmap.cpp
++++ b/openmw-0.51-tsp-src/apps/openmw/mwrender/localmap.cpp
+@@ -40,6 +40,15 @@
+     {
+         return val * val;
+     }
++
++    // TSP_MAPLIFE_V1 -- diagnostic-only map ownership trace. The existing
++    // diagnostic launcher exports TSP_GMAP_DUMP, so no extra launcher edit is needed.
++    unsigned long tspMapLifeGeneration = 0;
++    bool tspMapLifeEnabled()
++    {
++        return std::getenv("TSP_MAPLIFE") != nullptr
++            || std::getenv("TSP_GMAP_DUMP") != nullptr;
++    }
+ 
+     std::pair<int, int> divideIntoSegments(const osg::BoundingBox& bounds, int mapSize)
+     {
+@@ -93,6 +102,11 @@
+ 
+     LocalMap::~LocalMap()
+     {
++        if (tspMapLifeEnabled())
++            Log(Debug::Warning) << "TSP_MAPLIFE_V1 phase=destruct gen=" << tspMapLifeGeneration
++                                << " ext=" << mExteriorSegments.size()
++                                << " interior=" << mInteriorSegments.size()
++                                << " rtt=" << mLocalMapRTTs.size();
+         for (auto& rtt : mLocalMapRTTs)
+             mRoot->removeChild(rtt);
+     }
+@@ -106,8 +120,20 @@
+ 
+     void LocalMap::clear()
+     {
++        ++tspMapLifeGeneration;
++        if (tspMapLifeEnabled())
++            Log(Debug::Warning) << "TSP_MAPLIFE_V1 phase=clear_begin gen=" << tspMapLifeGeneration
++                                << " ext=" << mExteriorSegments.size()
++                                << " interior=" << mInteriorSegments.size()
++                                << " rtt=" << mLocalMapRTTs.size();
+         mExteriorSegments.clear();
+         mInteriorSegments.clear();
++        if (tspMapLifeEnabled())
++            Log(Debug::Warning) << "TSP_MAPLIFE_V1 phase=clear_end gen=" << tspMapLifeGeneration
++                                << " ext=" << mExteriorSegments.size()
++                                << " interior=" << mInteriorSegments.size()
++                                << " rtt=" << mLocalMapRTTs.size();
+     }
+ 
+     void LocalMap::saveFogOfWar(MWWorld::CellStore* cell) const
+@@ -178,6 +204,13 @@
+         MapSegment& segment = mInterior ? mInteriorSegments[std::make_pair(segmentX, segmentY)]
+                                         : mExteriorSegments[std::make_pair(segmentX, segmentY)];
+         segment.mMapTexture = static_cast<osg::Texture2D*>(mLocalMapRTTs.back()->getColorTexture(nullptr));
++        if (tspMapLifeEnabled())
++            Log(Debug::Warning) << "TSP_MAPLIFE_V1 phase=rtt_create gen=" << tspMapLifeGeneration
++                                << " cell=" << segmentX << "," << segmentY
++                                << " interior=" << (mInterior ? 1 : 0)
++                                << " res=" << mMapResolution
++                                << " tex=" << static_cast<const void*>(segment.mMapTexture.get())
++                                << " rtt=" << mLocalMapRTTs.size();
+     }
+ 
+     void LocalMap::requestMap(const MWWorld::CellStore* cell)
+@@ -209,7 +242,16 @@
+ 
+     void LocalMap::removeExteriorCell(int x, int y)
+     {
++        auto it = mExteriorSegments.find({ x, y });
++        if (tspMapLifeEnabled())
++            Log(Debug::Warning) << "TSP_MAPLIFE_V1 phase=remove_ext gen=" << tspMapLifeGeneration
++                                << " cell=" << x << "," << y
++                                << " found=" << (it != mExteriorSegments.end() ? 1 : 0)
++                                << " maptex=" << (it != mExteriorSegments.end() && it->second.mMapTexture ? 1 : 0)
++                                << " fogtex=" << (it != mExteriorSegments.end() && it->second.mFogOfWarTexture ? 1 : 0)
++                                << " ext_before=" << mExteriorSegments.size();
+         mExteriorSegments.erase({ x, y });
+     }
+ 
+@@ -242,6 +284,8 @@
+ 
+     void LocalMap::cleanupCameras()
+     {
++        const std::size_t tspBefore = mLocalMapRTTs.size();
++        std::size_t tspRemoved = 0;
+         auto it = mLocalMapRTTs.begin();
+         while (it != mLocalMapRTTs.end())
+         {
+@@ -249,9 +293,16 @@
+             {
+                 mRoot->removeChild(*it);
+                 it = mLocalMapRTTs.erase(it);
++                ++tspRemoved;
+             }
+             else
+                 it++;
+         }
++        if (tspMapLifeEnabled() && tspRemoved)
++            Log(Debug::Warning) << "TSP_MAPLIFE_V1 phase=rtt_cleanup gen=" << tspMapLifeGeneration
++                                << " before=" << tspBefore
++                                << " removed=" << tspRemoved
++                                << " after=" << mLocalMapRTTs.size()
++                                << " ext=" << mExteriorSegments.size()
++                                << " interior=" << mInteriorSegments.size();
+     }
+ 
+     void LocalMap::requestExteriorMap(const MWWorld::CellStore* cell, MapSegment& segment)
+@@ -612,6 +663,12 @@
+         mFogOfWarTexture->setWrap(osg::Texture::WRAP_T, osg::Texture::CLAMP_TO_EDGE);
+         mFogOfWarTexture->setUnRefImageDataAfterApply(false);
+         mFogOfWarTexture->setImage(mFogOfWarImage);
++        if (tspMapLifeEnabled())
++            Log(Debug::Warning) << "TSP_MAPLIFE_V1 phase=fog_texture gen=" << tspMapLifeGeneration
++                                << " tex=" << static_cast<const void*>(mFogOfWarTexture.get())
++                                << " image=" << static_cast<const void*>(mFogOfWarImage.get())
++                                << " size=" << (mFogOfWarImage ? mFogOfWarImage->s() : 0)
++                                << "x" << (mFogOfWarImage ? mFogOfWarImage->t() : 0);
+     }
+ 
+     void LocalMap::MapSegment::initFogOfWar()
+@@ -620,6 +677,11 @@
+         mFogOfWarImage = new osg::Image;
+         // Assign a PixelBufferObject for asynchronous transfer of data to the GPU
+         mFogOfWarImage->setPixelBufferObject(new osg::PixelBufferObject);
+         mFogOfWarImage->allocateImage(sFogOfWarResolution, sFogOfWarResolution, 1, GL_RGBA, GL_UNSIGNED_BYTE);
++        if (tspMapLifeEnabled())
++            Log(Debug::Warning) << "TSP_MAPLIFE_V1 phase=fog_image gen=" << tspMapLifeGeneration
++                                << " image=" << static_cast<const void*>(mFogOfWarImage.get())
++                                << " size=" << sFogOfWarResolution << "x" << sFogOfWarResolution
++                                << " pbo=1";
+         assert(mFogOfWarImage->isDataContiguous());
+         std::vector<uint32_t> data;
+         data.resize(sFogOfWarResolution * sFogOfWarResolution, 0xff000000);

@@ -1,0 +1,3798 @@
+#!/bin/bash
+# >>> TSP_QUIET_V1 BEGIN
+# Shipping: every proof line the launcher used to scatter over the SD card (tsp_prog.txt) goes into the one
+# game log, the perf sampler (openmw_perf_latest.txt) and the stall ring dumps (tsp_ring/) stay off.
+# quiet=off in $GAMEDIR/tsp_drawthread_policy.txt, or touch /mnt/SDCARD/tsp_quiet_off, brings them back.
+TSP_QUIET=1
+if grep -qs '^quiet=off' "/mnt/SDCARD/data/ports/openmw/tsp_drawthread_policy.txt" || [ -f /mnt/SDCARD/tsp_quiet_off ]; then TSP_QUIET=0; fi
+if [ "$TSP_QUIET" = 1 ]; then TSP_PROG=/tmp/tsp_prog_early.$$; TSP_PROG_TEE=/dev/null; else TSP_PROG=/mnt/SDCARD/tsp_prog.txt; TSP_PROG_TEE=/mnt/SDCARD/tsp_prog.txt; fi
+# <<< TSP_QUIET_V1 END
+# TSP_INTOCC_ENV_V2 - every interior-occlusion knob from one file. Runs before the
+# TSP_INTOCC_V1 block, which is inert while /mnt/SDCARD/tsp_intocc is absent.
+if [ -f /mnt/SDCARD/tsp_intocc.env ]; then
+  . /mnt/SDCARD/tsp_intocc.env
+  echo "TSP_INTOCC_ENV: TSP_INTOCC=$TSP_INTOCC MINRMUL=$TSP_INTOCC_MINRMUL MAXOCC=$TSP_INTOCC_MAXOCC MAXTRI=$TSP_INTOCC_MAXTRI BUDGET=$TSP_INTOCC_BUDGET"
+else
+  echo "TSP_INTOCC_ENV: no /mnt/SDCARD/tsp_intocc.env, defaults apply"
+fi
+# TSP_ASTC_V1 - ASTC is the texture path this port ships on, and until now it
+# reached the engine ONLY from /mnt/SDCARD/tsp_intocc.env. The game manager has
+# deleted that file before; with it gone TSP_KTX is unset, the engine falls back
+# to its compiled default, and the whole 138.3 MB -> 51.3 MB conversion is
+# silently abandoned with nothing in the log to say so. Measured on .12 09-14,
+# gameplay phase, two replicates: ASTC held the page-cache floor at 90 and 77 MB
+# against 28 and 31 for DDS, and cut faults from 32.5/34.2 to 28.3/25.2 per sec.
+# So it is defaulted HERE and no longer depends on a side file. The env file
+# still wins when it is present.
+#   off:  printf 'export TSP_KTX=0\n' >> /mnt/SDCARD/tsp_intocc.env
+case "${TSP_KTX:-}" in
+  0|1) ;;
+  *)   TSP_KTX=1 ;;
+esac
+export TSP_KTX
+echo "TSP_ASTC_V1 TSP_KTX=$TSP_KTX (1 = prefer the .ktx beside each .dds)"
+# TSP_LOADENV_V1 - the two switches openmw needs, delivered IN the launch chain.
+# /mnt/SDCARD/tsp_iotune.conf has carried both for days and NOTHING sources that
+# file: a bounded search found no reader, and /proc/<pid>/environ of a live game
+# showed neither variable. Its sysctl-shaped entries only looked effective because
+# kernel state is global and persists; every export in it was inert.
+# Deliberately only these two. That conf also sets OPENMW_DEBUG_LEVEL=INFO,
+# LIBGL_TSP_LOG=1 and TSP_FPS_OVERLAY=0, and switching ~15 never-live lines on at
+# once is not one change.
+# Off: touch /mnt/SDCARD/tsp_loadenv_off
+if [ ! -f /mnt/SDCARD/tsp_loadenv_off ]; then
+  export TSP_NO_LOADPURGE=1
+  export TSP_RELOAD_MEM_FLOOR_KB=80000
+  # read_ahead_kb reads 512 now but has NO writer on the card - it is a stale
+  # kernel value that dies at the next reboot, taking the 09-07 readahead fix
+  # (3.7x fewer faulting frames) with it. Re-apply it where it belongs.
+  for tsp_raq in /sys/block/mmcblk0/queue/read_ahead_kb /sys/block/mmcblk1/queue/read_ahead_kb; do
+    if [ -w "$tsp_raq" ]; then echo 512 > "$tsp_raq" 2>/dev/null; fi
+  done
+  echo "TSP_LOADENV_V1 armed NO_LOADPURGE=1 RELOAD_MEM_FLOOR_KB=120000 ra0=$(cat /sys/block/mmcblk0/queue/read_ahead_kb 2>/dev/null) ra1=$(cat /sys/block/mmcblk1/queue/read_ahead_kb 2>/dev/null)" >> "$TSP_PROG"
+else
+  echo "TSP_LOADENV_V1 disabled by /mnt/SDCARD/tsp_loadenv_off" >> "$TSP_PROG"
+fi
+
+# TSP_INTOCC_V1 mode file: 0/absent = upstream, 1 = interior occluders, 2 = 1 plus large-object tests
+if [ -f /mnt/SDCARD/tsp_intocc ]; then
+  TSP_INTOCC=$(cat /mnt/SDCARD/tsp_intocc)
+  export TSP_INTOCC
+  echo "TSP_INTOCC: mode $TSP_INTOCC"
+else
+  echo "TSP_INTOCC: unset, mode 0 (upstream behaviour)"
+fi
+# TSP_VBOHINT_V1 measurement only. No-op unless the arm file exists.
+if [ -f /mnt/SDCARD/tsp_vbo_on ]; then
+  OSG_VERTEX_BUFFER_HINT=VERTEX_BUFFER_OBJECT
+  export OSG_VERTEX_BUFFER_HINT
+  echo "TSP_VBOHINT: ARMED - forcing VBO for all drawables"
+else
+  echo "TSP_VBOHINT: disarmed - OSG default vertex path"
+fi
+# TSP_OSGSTATS_V1 measurement only. No-op unless the arm file exists.
+if [ -f /mnt/SDCARD/tsp_osgstats_on ]; then
+  OPENMW_OSG_STATS_FILE=/tmp/tsp_osgstats.txt
+  OPENMW_OSG_STATS_LIST="rendering;cameraobjects;frame_rate;engine"
+  export OPENMW_OSG_STATS_FILE OPENMW_OSG_STATS_LIST
+  echo "TSP_OSGSTATS: ARMED -> $OPENMW_OSG_STATS_FILE"
+else
+  echo "TSP_OSGSTATS: disarmed (touch /mnt/SDCARD/tsp_osgstats_on to arm)"
+fi
+# TSP_PORTABLE_ROOT_V1 -- the port root differs between OS images. Stock/CrossMix
+# keep the card at /mnt/SDCARD; Knulli (batocera-derived) splits the card and
+# puts the ports under /userdata. /mnt/UDISK exists on both, but probe for it
+# rather than assuming, so a future image without it still runs.
+tsp_root_candidates() {
+    printf '%s\n' \
+        /mnt/SDCARD/data/ports/openmw \
+        /mnt/sdcard/mmcblk1p1/data/ports/openmw \
+        /userdata/roms/ports/openmw \
+        /mnt/mmc/ports/openmw \
+        /mnt/sdcard/ports/openmw \
+        /roms/ports/openmw \
+        /storage/roms/ports/openmw
+}
+tsp_find_root() {
+    if [ -n "${OPENMW_GAMEDIR:-}" ] && [ -d "${OPENMW_GAMEDIR:-}" ]; then
+        printf '%s\n' "$OPENMW_GAMEDIR"; return 0
+    fi
+    if [ -n "${OPENMW51_GAMEDIR:-}" ] && [ -d "${OPENMW51_GAMEDIR:-}" ]; then
+        printf '%s\n' "$OPENMW51_GAMEDIR"; return 0
+    fi
+    # Prefer a root that really holds the engine: an empty leftover directory
+    # must never win over the real install.
+    for _r in $(tsp_root_candidates); do
+        if [ -x "$_r/bin/openmw-0.51" ]; then printf '%s\n' "$_r"; return 0; fi
+    done
+    for _r in $(tsp_root_candidates); do
+        if [ -d "$_r" ]; then printf '%s\n' "$_r"; return 0; fi
+    done
+    printf '%s\n' /mnt/SDCARD/data/ports/openmw
+    return 1
+}
+# TSP_PORTABLE_STATE_V2 -- where the navmesh db and the optional swapfile live.
+# V1 took the first WRITABLE directory in the list, and that is wrong on Knulli:
+# /mnt/UDISK exists there but is NOT a mount point. It is a plain directory on
+# the rootfs holding two joypad configs, so V1 happily pointed a navmesh db that
+# grows to hundreds of MB at the system partition. Writability alone proves
+# nothing. A state dir has to be real storage:
+#   * its own filesystem -- anything sharing a device with / is rootfs,
+#   * writable in fact (write a file; -w lies when you are root), and
+#   * big enough to matter.
+# Override with OPENMW_NAVMESH_DIR, or lower the bar with TSP_STATE_MIN_MB.
+TSP_STATE_MIN_MB=${TSP_STATE_MIN_MB:-768}
+tsp_df_line() {
+    _l=$(df -P "$1" 2>/dev/null | tail -1)
+    [ -n "$_l" ] || _l=$(df "$1" 2>/dev/null | tail -1)
+    printf '%s\n' "$_l"
+}
+tsp_state_ok() {
+    _d=$1
+    [ -d "$_d" ] || return 1
+    ( : > "$_d/.tsp-write-test" ) 2>/dev/null || return 1
+    rm -f "$_d/.tsp-write-test" 2>/dev/null
+    _line=$(tsp_df_line "$_d")
+    [ -n "$_line" ] || return 1
+    _dev=$(printf '%s\n' "$_line" | tr -s ' ' | cut -d' ' -f1)
+    _free=$(printf '%s\n' "$_line" | tr -s ' ' | cut -d' ' -f4)
+    _rootdev=$(tsp_df_line / | tr -s ' ' | cut -d' ' -f1)
+    [ -n "$_dev" ] || return 1
+    [ "$_dev" != "$_rootdev" ] || return 1
+    case "$_free" in ''|*[!0-9]*) return 1 ;; esac
+    [ "$(( _free / 1024 ))" -ge "$TSP_STATE_MIN_MB" ] || return 1
+    return 0
+}
+tsp_find_state_dir() {
+    if [ -n "${OPENMW_NAVMESH_DIR:-}" ] && [ -d "${OPENMW_NAVMESH_DIR:-}" ]; then
+        printf '%s\n' "$OPENMW_NAVMESH_DIR"; return 0
+    fi
+    # TSP_MUOS_V1 -- muOS mounts the card at /mnt/mmc (and a second card at
+    # /mnt/sdcard). Appended, so every existing system still picks exactly
+    # the directory it picked before.
+    for _d in /mnt/UDISK /userdata /storage /mnt/mmc /mnt/sdcard; do
+        if tsp_state_ok "$_d"; then printf '%s\n' "$_d"; return 0; fi
+    done
+    # Last resort: the card the game itself is on. It is real storage by
+    # definition -- the engine is sitting on it.
+    _r=$(tsp_find_root)
+    printf '%s\n' "$_r"
+    tsp_state_ok "$_r"
+}
+TSP_STATE_DIR="$(tsp_find_state_dir)"
+export OPENMW_TSP_NAVMESHDB="$TSP_STATE_DIR/openmw-nav/navmesh.db"
+export OPENMW_TSP_ENABLE_NAVIGATOR=1
+
+# OpenMW 0.51 fixed separate port root.
+# Do not auto-create alternate game roots; a bad path should fail instead of
+# silently creating an empty phantom directory.
+GAMEDIR="$(tsp_find_root)"
+
+if [ ! -d "$GAMEDIR" ]; then
+    FALLBACK_LOG="/tmp/openmw_log.txt"
+    {
+        echo "Launcher entered at: $(date)"
+        echo "ERROR: OpenMW 0.51 game directory does not exist:"
+        echo "  $GAMEDIR"
+    } > "$FALLBACK_LOG" 2>&1
+    exit 1
+fi
+
+LOG_FILE="$GAMEDIR/openmw_log.txt"
+: > "$LOG_FILE"
+exec >> "$LOG_FILE" 2>&1
+if [ "$TSP_QUIET" = 1 ]; then [ -f "$TSP_PROG" ] && { cat "$TSP_PROG"; rm -f "$TSP_PROG"; }; TSP_PROG="$LOG_FILE"; echo "TSP_QUIET_V1 on: proof lines in this log only, perf sampler off, ring dumps off"; else echo "TSP_QUIET_V1 off (policy): side files as before"; fi   # TSP_QUIET_V1 OPEN
+
+echo "Launcher entered at: $(date)"
+echo "Shell: $0"
+echo "Bash version: ${BASH_VERSION:-unknown}"
+echo "Arguments: $*"
+echo "Log file: $LOG_FILE"
+
+cd "$GAMEDIR"
+
+# Flattened OpenMW 0.51 layout: the port root itself is the runtime root.
+RUNTIME="$GAMEDIR"
+OPENMW_BIN="$GAMEDIR/bin/openmw-0.51"
+OPENMW_RESOURCES="$GAMEDIR/resources"
+OPENMW_LIB="$GAMEDIR/lib"
+CONFIG_DIR="$GAMEDIR/config"
+SAVE_DIR="$GAMEDIR/savegame"
+TEXCACHE_DIR="$GAMEDIR/texcache"
+PATH_MIGRATOR="$GAMEDIR/launcher/openmw-clean-path-migrate.py"
+CONTROL_HELPER="$GAMEDIR/tsp_openmw_controls"
+CONTROL_HELPER_LOG="/tmp/tsp_openmw_controls.log"
+CONTROL_HELPER_PID=""
+OPENMW_PID=""
+
+# TSP_INTERNAL_RESOLUTION_RESTART_MARKER_051_V20R4
+RESOLUTION_RESTART_MARKER="$GAMEDIR/.openmw-resolution-restart"
+# Logging already started at the top of the launcher and remains on the
+# same root-level text file for the entire run.
+
+echo
+echo "=========================================="
+echo "Starting OpenMW 0.51 on TrimUI Smart Pro"
+echo "Launcher: Morrowind.sh"
+echo "Mode: native OpenMW controller + hybrid mouse/text helper"
+echo "Date: $(date)"
+echo "Game directory: $GAMEDIR"
+echo "Runtime: $RUNTIME"
+echo "State directory: $TSP_STATE_DIR  (navmesh db + optional swapfile)"
+echo "TSP_PORTABLE_STATE_V2 rootdev=[$(tsp_df_line / | tr -s ' ' | cut -d' ' -f1)] statedev=[$(tsp_df_line "$TSP_STATE_DIR" | tr -s ' ' | cut -d' ' -f1)] statefreeMB=[$(( $(tsp_df_line "$TSP_STATE_DIR" | tr -s ' ' | cut -d' ' -f4) / 1024 ))]"
+echo "=========================================="
+
+export XDG_RUNTIME_DIR="/tmp/runtime-root"
+# >>> TSP_DRAWTHREAD_V1 MODEL BEGIN (was: export OSG_THREADING=SingleThreaded)
+# OSG draw traversal on its own thread - upstream OpenMW desktop default; SingleThreaded serialised
+# update+cull+draw on one core. Policy $GAMEDIR/tsp_drawthread_policy.txt: model=single = old model,
+# core=off = do not bring a second fast core online, pin=off = leave thread placement alone,
+# idle=main = park SCHED_IDLE threads (navmesh updater) on the main core so they only get its leftover cycles.
+if grep -qs '^model=single' "$GAMEDIR/tsp_drawthread_policy.txt"; then
+    export OSG_THREADING=SingleThreaded
+else
+    export OSG_THREADING=DrawThreadPerContext
+fi
+echo "TSP_DRAWTHREAD_V1 model=$OSG_THREADING policy=[$(cat "$GAMEDIR/tsp_drawthread_policy.txt" 2>/dev/null | tr '\n' ' ')]"
+# <<< TSP_DRAWTHREAD_V1 MODEL END
+
+mkdir -p \
+    "$XDG_RUNTIME_DIR" \
+    "$CONFIG_DIR" \
+    "$CONFIG_DIR/openmw" \
+    "$SAVE_DIR" \
+    "$SAVE_DIR/data" \
+    "$SAVE_DIR/screenshots" \
+    "$TEXCACHE_DIR"
+
+chmod 0700 "$XDG_RUNTIME_DIR"
+
+export XDG_DATA_HOME="$CONFIG_DIR"
+export XDG_CONFIG_HOME="$CONFIG_DIR"
+export OPENMW_RESOURCES="$OPENMW_RESOURCES"
+
+XDG_DATA_HOME_PM="${XDG_DATA_HOME_PM:-$HOME/.local/share}"
+controlfolder=""
+
+for candidate in \
+    "/mnt/SDCARD/Apps/PortMaster" \
+    "/opt/system/Tools/PortMaster" \
+    "/opt/tools/PortMaster" \
+    "$XDG_DATA_HOME_PM/PortMaster" \
+    "/mnt/SDCARD/data/ports/PortMaster" \
+    "/userdata/roms/ports/PortMaster" \
+    "/mnt/mmc/ports/PortMaster" \
+    "/mnt/mmc/MUOS/PortMaster" \
+    "/roms/ports/PortMaster"
+do
+    if [ -f "$candidate/control.txt" ]; then
+        controlfolder="$candidate"
+        break
+    fi
+done
+
+if [ -z "$controlfolder" ]; then
+    controlfolder="/roms/ports/PortMaster"
+fi
+
+echo "PortMaster control folder: $controlfolder"
+
+# control.txt references ${PORT_DIR} immediately. Define it before sourcing.
+export PORT_DIR="$GAMEDIR"
+
+echo "Launcher revision: openmw-portable-zram-backend-2026-09-18-v7"
+echo "PORT_DIR before loading PortMaster: $PORT_DIR"
+
+if [ -f "$controlfolder/control.txt" ]; then
+    # PortMaster probes unset variables and tests whether sudo exists.
+    # Source it with errexit/nounset disabled so those probes can complete.
+    set +e
+    set +u
+    set +o pipefail 2>/dev/null || true
+
+    source "$controlfolder/control.txt"
+    CONTROL_TXT_RESULT=$?
+
+    echo "PortMaster control.txt returned: $CONTROL_TXT_RESULT"
+else
+    echo "WARNING: PortMaster control.txt was not found."
+fi
+
+if type get_controls >/dev/null 2>&1; then
+    get_controls 2>/dev/null || true
+fi
+
+if [ -n "${CFW_NAME:-}" ] && [ -f "${controlfolder}/mod_${CFW_NAME}.txt" ]; then
+    source "${controlfolder}/mod_${CFW_NAME}.txt"
+fi
+
+if ! type pm_finish >/dev/null 2>&1; then
+    pm_finish() { true; }
+fi
+
+if ! type pm_gptokeyb_finish >/dev/null 2>&1; then
+    pm_gptokeyb_finish() {
+        killall -9 gptokeyb2 gptokeyb 2>/dev/null || true
+    }
+fi
+
+echo "CFW_NAME=${CFW_NAME:-unknown}"
+echo "DEVICE_NAME=${DEVICE_NAME:-unknown}"
+echo "DEVICE_CPU=${DEVICE_CPU:-unknown}"
+echo "DEVICE_ARCH=${DEVICE_ARCH:-unknown}"
+
+killall -9 gptokeyb2 gptokeyb 2>/dev/null || true
+pkill -9 -f "$GAMEDIR/tsp_openmw_controls" 2>/dev/null || true
+pkill -9 -f "$GAMEDIR/openmw_cursor" 2>/dev/null || true
+
+# TSP_SYSTEM_SDL_051
+# The working OpenMW 0.48 TSP launcher deliberately avoids bundled SDL.
+# CrossMix/TrimUI provides the SDL build configured for the handheld display.
+rm -f "$OPENMW_LIB"/libSDL2* 2>/dev/null || true
+rm -f "$GAMEDIR/lib"/libSDL2* 2>/dev/null || true
+rm -f "$GAMEDIR/libs"/libSDL2* 2>/dev/null || true
+
+export DEVICE_ARCH="${DEVICE_ARCH:-aarch64}"
+export PATH="$RUNTIME/bin:$GAMEDIR:$GAMEDIR/bin.${DEVICE_ARCH}:$PATH"
+export LD_LIBRARY_PATH="$OPENMW_LIB:$GAMEDIR/libs:$GAMEDIR/lib/aarch64:${LD_LIBRARY_PATH:-}"
+
+if [ -d "$GAMEDIR/libs.${DEVICE_ARCH}" ]; then
+    export LD_LIBRARY_PATH="$GAMEDIR/libs.${DEVICE_ARCH}:$LD_LIBRARY_PATH"
+fi
+
+if [ -n "${CFW_NAME:-}" ] && [ -d "$GAMEDIR/libs.${CFW_NAME}.${DEVICE_ARCH}" ]; then
+    export LD_LIBRARY_PATH="$GAMEDIR/libs.${CFW_NAME}.${DEVICE_ARCH}:$LD_LIBRARY_PATH"
+fi
+
+if [ -n "${CFW_NAME:-}" ] && [ -d "$GAMEDIR/libs.${CFW_NAME}" ]; then
+    export LD_LIBRARY_PATH="$GAMEDIR/libs.${CFW_NAME}:$LD_LIBRARY_PATH"
+fi
+
+# TSP_SDL2_OVERRIDE_051_V29
+# Drop-in location for a sensor-capable SDL2. It is never purged by the block
+# above, so a replacement library survives relaunches. Only active if present.
+TSP_SDL2_DIR="$GAMEDIR/lib.sdl2"
+
+if [ -d "$TSP_SDL2_DIR" ]; then
+    export LD_LIBRARY_PATH="$TSP_SDL2_DIR:$LD_LIBRARY_PATH"
+    echo "SDL2 override directory active: $TSP_SDL2_DIR"
+fi
+
+export OSG_LIBRARY_PATH="$GAMEDIR/osgPlugins-3.6.5"
+
+CONTROLLER_DB_FILE="$GAMEDIR/gamecontrollerdb_tsp.txt"
+
+# TSP_PAD_DB_V4 -- stock pad, or the TRIMUI Smart Pro Controller on any OS.
+#
+# Knulli and muOS expose the SAME pad: name 'TRIMUI Smart Pro Controller',
+# KEY codes 304,305,307,308,310-316 (no BTN_THUMBL/THUMBR, so no stick clicks,
+# and TL2/TR2 are digital buttons), ABS X/Y/Z/RZ + hat0. Identical mapping.
+# They differ ONLY in the evdev Version field, which SDL bakes into the GUID:
+#   Knulli Version=0002 -> 03000000000000000000000002000000
+#   muOS   Version=0001 -> 03000000000000000000000001000000
+# So build the GUID from the Version the kernel reports instead of hardcoding
+# one per OS -- the next image with a third Version works with no edit.
+#
+# BUTTON ORDER DIFFERS BETWEEN THE TWO PADS -- tested on hardware:
+#   stock TRIMUI Player1          a:b1,b:b0,x:b3,y:b2   (correct on stock/CrossMix)
+#   TRIMUI Smart Pro Controller   a:b0,b:b1,x:b2,y:b3   (correct on Knulli/muOS)
+# The two firmwares assign evdev codes 304/305/307/308 to different physical
+# buttons, so one ordering cannot serve both. Using the stock order on the Smart
+# Pro pad is what made A/B and X/Y read backwards there.
+# Separately: a mapping whose GUID does not match leaves the pad unmapped and SDL
+# falls back to its generic Xbox default -- a different way to get crossed buttons.
+TSP_PAD_DB_STOCK='0300a3845e0400008e02000014010000,TRIMUI Player1,a:b1,b:b0,x:b3,y:b2,back:b7,start:b6,guide:b8,leftstick:b9,rightstick:b10,leftshoulder:b4,rightshoulder:b5,lefttrigger:a2,righttrigger:a5,leftx:a0,lefty:a1,rightx:a3,righty:a4,dpup:h0.1,dpdown:h0.4,dpleft:h0.8,dpright:h0.2,platform:Linux,'
+TSP_PAD_DB_ALT_BODY=',TRIMUI Smart Pro Controller,a:b0,b:b1,x:b2,y:b3,back:b9,start:b8,guide:b10,leftshoulder:b4,rightshoulder:b5,lefttrigger:b6,righttrigger:b7,leftx:a0,lefty:a1,rightx:a2,righty:a3,dpup:h0.1,dpdown:h0.4,dpleft:h0.8,dpright:h0.2,platform:Linux,'
+TSP_PAD_VER=$(awk '
+    /^I: / { for (i = 1; i <= NF; i++) if ($i ~ /^Version=/) { v = $i; sub(/Version=/, "", v) } }
+    /^N: Name="TRIMUI Smart Pro Controller"/ { print v; exit }
+' /proc/bus/input/devices 2>/dev/null)
+case "$TSP_PAD_VER" in
+    [0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F])
+        TSP_PAD_GUID="030000000000000000000000$(printf '%s%s' "$(echo "$TSP_PAD_VER" | cut -c3-4)" "$(echo "$TSP_PAD_VER" | cut -c1-2)")0000"
+        printf '%s\n' "$TSP_PAD_GUID$TSP_PAD_DB_ALT_BODY" > "$CONTROLLER_DB_FILE"
+        echo "TSP_PAD_DB_V4: TRIMUI Smart Pro Controller, evdev Version=$TSP_PAD_VER, guid=$TSP_PAD_GUID"
+        ;;
+    *)
+        printf '%s\n' "$TSP_PAD_DB_STOCK" > "$CONTROLLER_DB_FILE"
+        echo "TSP_PAD_DB_V4: stock TRIMUI Player1 mapping selected"
+        ;;
+esac
+
+export SDL_GAMECONTROLLERCONFIG_FILE="$CONTROLLER_DB_FILE"
+export SDL_GAMECONTROLLERCONFIG="$(cat "$CONTROLLER_DB_FILE")"
+
+# TSP_DECOMP_V1 - OPENMW_DECOMPRESS_TEXTURES makes OpenMW expand compressed
+# textures to plain RGBA on the CPU before upload. It is here for the DDS
+# path, because gl4es on GLES2 has no S3TC - but it also expands the ASTC
+# .ktx, which would cancel the whole texture conversion at load time and
+# is the only mechanism that explains the 09-14 A/B measuring nothing:
+# 138.3 MB DDS -> 51.3 MB KTX on disk, and peak VmRSS 383 vs 383 MB.
+# Default is the shipped behaviour. Off: touch /mnt/SDCARD/tsp_decomp_off
+if [ -f /mnt/SDCARD/tsp_decomp_off ]; then
+    unset OPENMW_DECOMPRESS_TEXTURES
+    echo "TSP_DECOMP_V1 decompress OFF (tsp_decomp_off present)" >> "$TSP_PROG"
+else
+    export OPENMW_DECOMPRESS_TEXTURES=1
+    echo "TSP_DECOMP_V1 decompress ON (shipped default)" >> "$TSP_PROG"
+fi
+export LIBGL_STREAM=1
+export LIBGL_NOTEST=1
+export LIBGL_FORCENPOT=0
+export LIBGL_MIPMAP=5
+export LIBGL_TEXPATH="$TEXCACHE_DIR/"
+export LIBGL_RECOMPTEX=0
+export LIBGL_NOMIPMAPS=0
+export LIBGL_SHRINK=0
+
+echo
+echo "=========================================="
+echo "PortMaster graphics setup"
+echo "=========================================="
+
+if [ -n "${CFW_NAME:-}" ] && [ -f "${controlfolder}/libgl_${CFW_NAME}.txt" ]; then
+    source "${controlfolder}/libgl_${CFW_NAME}.txt"
+elif [ -f "${controlfolder}/libgl_default.txt" ]; then
+    source "${controlfolder}/libgl_default.txt"
+else
+    echo "WARNING: No PortMaster GL4ES configuration file was found."
+fi
+
+echo "LD_LIBRARY_PATH:"
+echo "$LD_LIBRARY_PATH"
+echo "OSG_LIBRARY_PATH:"
+echo "$OSG_LIBRARY_PATH"
+echo "=========================================="
+
+# ==========================================================================
+# TSP_SDL_SENSOR_FALLBACK_051_V29
+#
+# OpenMW 0.49+ calls SDL_Init(... | SDL_INIT_SENSOR). CrossMix ships an SDL2
+# built WITH sensor support, so that succeeds. Stock TrimUI OS falls back to
+# /usr/trimui/lib, whose SDL2 is built WITHOUT it, and the engine aborts:
+#     Fatal error: Could not initialize SDL! SDL not built with sensor support
+#
+# SDL2 only embeds that message when compiled with SDL_SENSOR_DISABLED, so its
+# presence in the library the loader will actually pick is a reliable "this
+# device needs the shim" signal. When it is there, lib/libtsp_sdl_sensor_shim.so
+# is preloaded ahead of everything else and masks the flag out of SDL_Init.
+#
+#   TSP_SDL_SENSOR_SHIM=1  force the shim on
+#   TSP_SDL_SENSOR_SHIM=0  force it off
+#   unset                  decide from the library itself (default)
+# ==========================================================================
+TSP_SDL_SHIM="$GAMEDIR/lib/libtsp_sdl_sensor_shim.so"
+TSP_SDL_SHIM_ACTIVE=0
+TSP_SDL2_PATH=""
+
+tsp_sdl2_lacks_sensor() {
+    [ -e "$1" ] || return 1
+    if grep -q 'SDL not built with sensor support' "$1" 2>/dev/null; then
+        return 0
+    fi
+    strings "$1" 2>/dev/null | grep -q 'SDL not built with sensor support'
+}
+
+tsp_find_sdl2() {
+    TSP_OLD_IFS="$IFS"
+    IFS=:
+    for d in $LD_LIBRARY_PATH; do
+        [ -n "$d" ] || continue
+        if [ -e "$d/libSDL2-2.0.so.0" ]; then
+            IFS="$TSP_OLD_IFS"
+            printf '%s\n' "$d/libSDL2-2.0.so.0"
+            return 0
+        fi
+    done
+    IFS="$TSP_OLD_IFS"
+
+    for d in /usr/trimui/lib /mnt/SDCARD/System/lib /usr/lib /lib /lib64; do
+        if [ -e "$d/libSDL2-2.0.so.0" ]; then
+            printf '%s\n' "$d/libSDL2-2.0.so.0"
+            return 0
+        fi
+    done
+    return 1
+}
+
+echo
+echo "=========================================="
+echo "SDL2 SENSOR SUPPORT"
+echo "=========================================="
+
+TSP_SDL2_PATH="$(tsp_find_sdl2)"
+
+if [ -z "$TSP_SDL2_PATH" ]; then
+    echo "SDL2 in use:      NOT FOUND on any library path"
+else
+    echo "SDL2 in use:      $TSP_SDL2_PATH"
+fi
+
+case "${TSP_SDL_SENSOR_SHIM:-auto}" in
+    1)
+        TSP_SDL_SHIM_ACTIVE=1
+        echo "Sensor support:   forced shim (TSP_SDL_SENSOR_SHIM=1)"
+        ;;
+    0)
+        TSP_SDL_SHIM_ACTIVE=0
+        echo "Sensor support:   shim disabled (TSP_SDL_SENSOR_SHIM=0)"
+        ;;
+    *)
+        if [ -n "$TSP_SDL2_PATH" ] && tsp_sdl2_lacks_sensor "$TSP_SDL2_PATH"; then
+            TSP_SDL_SHIM_ACTIVE=1
+            echo "Sensor support:   MISSING from this SDL2 (stock OS build)"
+        else
+            TSP_SDL_SHIM_ACTIVE=0
+            echo "Sensor support:   present (CrossMix-style SDL2)"
+        fi
+        ;;
+esac
+
+if [ "$TSP_SDL_SHIM_ACTIVE" = "1" ]; then
+    if [ -f "$TSP_SDL_SHIM" ]; then
+        echo "SDL sensor shim:  ACTIVE ($TSP_SDL_SHIM)"
+    else
+        TSP_SDL_SHIM_ACTIVE=0
+        echo "SDL sensor shim:  MISSING -- $TSP_SDL_SHIM"
+        echo "This device's SDL2 has no sensor support, so OpenMW will abort with"
+        echo "  Could not initialize SDL! SDL not built with sensor support"
+        echo "Reinstall the port, or drop a sensor-capable libSDL2-2.0.so.0 into"
+        echo "  $GAMEDIR/lib.sdl2/"
+    fi
+else
+    echo "SDL sensor shim:  not needed"
+fi
+echo "=========================================="
+
+export OSG_NOTIFY_LEVEL=FATAL
+export OPENMW_DEBUG_LEVEL=warning
+export OPENMW_RECAST_MAX_LOG_LEVEL=warning
+
+# OpenMW 0.51 uses its own isolated copy of the Morrowind game data.
+TARGET_DATA_DIR="$GAMEDIR/data/Data Files"
+
+# Support a flattened data folder as a fallback, but prefer the normal
+# Morrowind "Data Files" directory when it exists.
+if [ ! -d "$TARGET_DATA_DIR" ] && [ -d "$GAMEDIR/data" ]; then
+    TARGET_DATA_DIR="$GAMEDIR/data"
+fi
+
+if [ ! -d "$TARGET_DATA_DIR" ]; then
+    echo "ERROR: OpenMW 0.51 Morrowind data directory was not found."
+    echo "Expected one of:"
+    echo "  $GAMEDIR/data/Data Files"
+    echo "  $GAMEDIR/data"
+    pm_gptokeyb_finish
+    pm_finish
+    exit 1
+fi
+
+if [ ! -f "$TARGET_DATA_DIR/Morrowind.esm" ]; then
+    echo "ERROR: Morrowind.esm was not found in:"
+    echo "  $TARGET_DATA_DIR"
+    pm_gptokeyb_finish
+    pm_finish
+    exit 1
+fi
+
+if [ ! -f "$TARGET_DATA_DIR/Morrowind.bsa" ]; then
+    echo "ERROR: Morrowind.bsa was not found in:"
+    echo "  $TARGET_DATA_DIR"
+    pm_gptokeyb_finish
+    pm_finish
+    exit 1
+fi
+
+echo "Morrowind data directory: $TARGET_DATA_DIR"
+echo "Verified Morrowind.esm: $TARGET_DATA_DIR/Morrowind.esm"
+echo "Verified Morrowind.bsa: $TARGET_DATA_DIR/Morrowind.bsa"
+
+# TSP_POSIX_V1 - was a bash array, which busybox ash cannot parse: the stock-OS
+# card runs this launcher under ash, not bash, and died here with
+# "line 422: syntax error: unexpected \"(\"" before the game ever started.
+#
+# Fed by a heredoc, NOT a pipe. A pipe would put the loop in a subshell and the
+# exit 1 below would leave the launcher running with a missing runtime file.
+# The heredoc keeps the loop in the current shell, and read -r with IFS unset
+# keeps paths containing spaces intact.
+while IFS= read -r required; do
+    [ -n "$required" ] || continue
+    if [ ! -e "$required" ]; then
+        echo "ERROR: Required OpenMW 0.51 runtime item is missing:"
+        echo "  $required"
+        pm_gptokeyb_finish
+        pm_finish
+        exit 1
+    fi
+done <<TSP_REQEOF
+$OPENMW_BIN
+$CONTROL_HELPER
+$OPENMW_RESOURCES
+$OPENMW_RESOURCES/defaults.bin
+$OPENMW_RESOURCES/vfs
+$OPENMW_RESOURCES/vfs-mw
+$OPENMW_LIB/libMyGUIEngine.so.3.4.3
+$OPENMW_LIB/libstdc++.so.6
+$OPENMW_LIB/libgcc_s.so.1
+TSP_REQEOF
+
+for required_lib in \
+    libOpenThreads.so.21 \
+    libosg.so.162 \
+    libosgDB.so.162 \
+    libosgGA.so.162 \
+    libosgParticle.so.162 \
+    libosgShadow.so.162 \
+    libosgText.so.162 \
+    libosgUtil.so.162 \
+    libosgViewer.so.162
+do
+    if [ ! -s "$OPENMW_LIB/$required_lib" ]; then
+        echo "ERROR: Missing or invalid OpenMW 0.51 OSG library:"
+        echo "  $OPENMW_LIB/$required_lib"
+        pm_gptokeyb_finish
+        pm_finish
+        exit 1
+    fi
+done
+
+chmod +x "$OPENMW_BIN" "$CONTROL_HELPER"
+
+BASE_CFG="$GAMEDIR/openmw.base.cfg"
+ACTIVE_CFG="$GAMEDIR/openmw.cfg"
+LOCAL_CFG="$GAMEDIR/bin/openmw.cfg"
+USER_CFG="$CONFIG_DIR/openmw.cfg"
+COMPAT_USER_CFG="$CONFIG_DIR/openmw/openmw.cfg"
+
+if [ ! -f "$BASE_CFG" ]; then
+    echo "ERROR: Missing complete OpenMW 0.51 base config:"
+    echo "  $BASE_CFG"
+    pm_gptokeyb_finish
+    pm_finish
+    exit 1
+fi
+
+if [ ! -f "$ACTIVE_CFG" ]; then
+    echo "ERROR: Missing persistent OpenMW 0.51 main config:"
+    echo "  $ACTIVE_CFG"
+    pm_gptokeyb_finish
+    pm_finish
+    exit 1
+fi
+
+# TSP_PORTABLE_CFG_V1 -- the configs persist ABSOLUTE paths. Move the card to an
+# OS with a different hierarchy (Knulli puts the ports under /userdata) and every
+# resources= / data= / config= line still names the old root, so the engine finds
+# no Morrowind.esm, dies before it opens a window, and leaves a black screen and
+# no log to read. This is the exact failure the clean-layout rename caused in
+# August, which is why it is repaired on EVERY launch rather than once.
+#
+# Longest prefixes first: /mnt/SDCARD/data/ports/openmw is a prefix of
+# .../openmw51, so rewriting the short one first would corrupt the long one.
+tsp_cfg_old_roots() {
+    printf '%s\n' \
+        /mnt/SDCARD/data/ports/openmw51 \
+        /mnt/sdcard/mmcblk1p1/data/ports/openmw51 \
+        /userdata/roms/ports/openmw51 \
+        /mnt/mmc/ports/openmw51 \
+        /mnt/sdcard/ports/openmw51 \
+        /roms/ports/openmw51 \
+        /storage/roms/ports/openmw51
+    tsp_root_candidates
+}
+tsp_cfg_repair() {
+    for _t in "$@"; do
+        [ -f "$_t" ] || continue
+        _backed=0
+        for _old in $(tsp_cfg_old_roots); do
+            [ "$_old" = "$GAMEDIR" ] && continue
+            # A candidate can be a SUFFIX of the live root: /roms/ports/openmw
+            # sits inside /userdata/roms/ports/openmw. Rewriting that one would
+            # eat its own output and produce /userdata/userdata/roms/... , and
+            # it would do it again on every launch. Skip those outright.
+            case "$GAMEDIR" in *"$_old") continue ;; esac
+            grep -qF "$_old" "$_t" 2>/dev/null || continue
+            if [ "$_backed" = 0 ]; then
+                cp -f "$_t" "$_t.before-portable" 2>/dev/null
+                _backed=1
+            fi
+            # Only at a path boundary -- start of line, or after = " ' : or
+            # whitespace -- so a root can never be rewritten mid-path.
+            sed -i \
+                -e "s|^$_old|$GAMEDIR|" \
+                -e "s|\([=\"':[:space:]]\)$_old|\1$GAMEDIR|g" \
+                "$_t"
+            echo "TSP_PORTABLE_CFG_V1 repaired $_t: $_old -> $GAMEDIR"
+        done
+    done
+    return 0
+}
+
+tsp_cfg_repair "$BASE_CFG" "$ACTIVE_CFG" "$LOCAL_CFG" "$USER_CFG" "$COMPAT_USER_CFG"
+
+# TSP_CLEAN_LAYOUT_CONFIG_MIGRATION_V1
+# The directory rename also has to update absolute paths persisted inside the
+# main/user configurations.  Perform that exact, transactional migration before
+# copying the executable-local config; otherwise OpenMW sees the new launcher
+# root but still searches the retired openmw51 tree for data and saves.
+if [ ! -x "$PATH_MIGRATOR" ]; then
+    echo "WARNING: Clean-layout configuration migrator is missing or not executable:"
+    echo "  $PATH_MIGRATOR"
+    echo "         Absolute paths were already normalised by TSP_PORTABLE_CFG_V1."
+elif ! command -v python3 >/dev/null 2>&1; then
+    # TSP_PORTABLE_CFG_V1 -- not every OS image ships python3. The openmw51 ->
+    # openmw rewrite the migrator performs is already covered by tsp_cfg_repair
+    # above, so a missing interpreter is a warning, not a dead launch.
+    echo "WARNING: python3 not present; skipping the clean-layout migrator."
+    echo "         Absolute paths were already normalised by TSP_PORTABLE_CFG_V1."
+elif ! { python3 "$PATH_MIGRATOR" "$GAMEDIR" || true; }; then
+    # TSP_PORTABLE_CFG_V1 -- the migrator carries a hardcoded whitelist of game
+    # roots and refuses anything else ("refusing unexpected game root"). On
+    # Knulli that is /userdata/roms/ports/openmw, so it exits non-zero and the
+    # launcher used to kill itself over a migration it no longer needs.
+    #
+    # This is safe to ignore for two reasons. The migrator is transactional and
+    # rolls back its own partial work, so nothing is left half-written. And
+    # tsp_cfg_repair above has already rewritten every absolute path to
+    # $GAMEDIR, which is the only thing the migrator was there to do.
+    echo "WARNING: the clean-layout migrator refused this game root:"
+    echo "  $GAMEDIR"
+    echo "         It only recognises the stock /mnt/SDCARD layout. It rolled"
+    echo "         itself back, and TSP_PORTABLE_CFG_V1 has already normalised"
+    echo "         every persisted path. Continuing."
+fi
+
+# Run the repair again: the migrator rewrites the same lines, and whatever it
+# decided, the final word on where this install lives belongs to $GAMEDIR.
+tsp_cfg_repair "$BASE_CFG" "$ACTIVE_CFG" "$USER_CFG" "$COMPAT_USER_CFG"
+
+# OpenMW loads a config beside the executable. Keep that runtime-local copy
+# synchronized from the persistent top-level 0.51 main config.
+# OpenMW 0.51 loads builtin.omwscripts internally. An explicit content= entry
+# from older OpenMW configs makes 0.51 abort as a duplicate.
+sed -i '/^[[:space:]]*content=builtin\.omwscripts[[:space:]]*$/d' "$ACTIVE_CFG"
+sed -i '/^[[:space:]]*script-blacklist=/d' "$ACTIVE_CFG"
+
+cp -f "$ACTIVE_CFG" "$LOCAL_CFG"
+
+echo "Synchronized persistent main config:"
+echo "  $ACTIVE_CFG"
+echo "to executable-local config:"
+echo "  $LOCAL_CFG"
+
+echo "Main config fallback count:"
+grep -c '^fallback=' "$LOCAL_CFG" 2>/dev/null || true
+echo "FontColor_color_header:"
+grep -n '^fallback=FontColor_color_header,' "$LOCAL_CFG" 2>/dev/null | head -1 || true
+
+write_initial_user_cfg() {
+    CFG_FILE="$1"
+    mkdir -p "$(dirname "$CFG_FILE")"
+
+    cat > "$CFG_FILE" <<EOF_USER_CFG
+fallback-archive=Morrowind.bsa
+content=Morrowind.esm
+EOF_USER_CFG
+
+    if [ -f "$TARGET_DATA_DIR/Tribunal.esm" ]; then
+        [ -f "$TARGET_DATA_DIR/Tribunal.bsa" ] && \
+            echo "fallback-archive=Tribunal.bsa" >> "$CFG_FILE"
+        echo "content=Tribunal.esm" >> "$CFG_FILE"
+    fi
+
+    if [ -f "$TARGET_DATA_DIR/Bloodmoon.esm" ]; then
+        [ -f "$TARGET_DATA_DIR/Bloodmoon.bsa" ] && \
+            echo "fallback-archive=Bloodmoon.bsa" >> "$CFG_FILE"
+        echo "content=Bloodmoon.esm" >> "$CFG_FILE"
+    fi
+}
+
+# USER_CFG is the canonical persistent content/mod list.
+# The full main/base config already contains content=builtin.omwscripts.
+# It must not also appear in a user/content config.
+if [ ! -f "$USER_CFG" ]; then
+    write_initial_user_cfg "$USER_CFG"
+    echo "Created persistent user content config:"
+    echo "  $USER_CFG"
+else
+    echo "Keeping existing persistent user content config:"
+    echo "  $USER_CFG"
+fi
+
+# Repair the exact stale entry that caused:
+# "Content file specified more than once: builtin.omwscripts"
+sed -i '/^[[:space:]]*content=builtin\.omwscripts[[:space:]]*$/d' "$USER_CFG"
+
+# The nested location is compatibility-only. Keep it identical to USER_CFG so
+# an old full/base config cannot remain there and reintroduce duplicate content.
+mkdir -p "$(dirname "$COMPAT_USER_CFG")"
+cp -f "$USER_CFG" "$COMPAT_USER_CFG"
+
+echo "Synchronized compatibility user content config:"
+echo "  $COMPAT_USER_CFG"
+
+echo "Explicit builtin.omwscripts counts (OpenMW 0.51 expects zero):"
+echo -n "  main: "
+grep -c '^content=builtin\.omwscripts$' "$LOCAL_CFG" 2>/dev/null || true
+echo -n "  user: "
+grep -c '^content=builtin\.omwscripts$' "$USER_CFG" 2>/dev/null || true
+echo -n "  compat: "
+grep -c '^content=builtin\.omwscripts$' "$COMPAT_USER_CFG" 2>/dev/null || true
+
+cp -f "$OPENMW_RESOURCES/defaults.bin" "$CONFIG_DIR/defaults.bin"
+cp -f "$OPENMW_RESOURCES/defaults.bin" "$CONFIG_DIR/openmw/defaults.bin"
+
+SETTINGS_FILE="$CONFIG_DIR/settings.cfg"
+
+python3 - "$SETTINGS_FILE" <<'PY'
+import configparser
+import os
+import sys
+
+path = sys.argv[1]
+config = configparser.ConfigParser(interpolation=None, strict=False, empty_lines_in_values=False)
+config.optionxform = str
+
+if os.path.isfile(path):
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as handle:
+            config.read_file(handle)
+    except Exception as exc:
+        print("Warning: could not parse existing settings.cfg:", exc)
+
+values = {
+    "Shaders": {
+        "force shaders": "false",
+        "force per pixel lighting": "false",
+        "clamp lighting": "false",
+        "auto use object normal maps": "false",
+        "auto use object specular maps": "false",
+        "auto use terrain normal maps": "false",
+        "auto use terrain specular maps": "false",
+        "apply lighting to environment maps": "false",
+    },
+    "Water": {
+        "refraction": "false",
+        "refraction": "false",
+        "rtt size": "128",
+        "reflection detail": "0",
+    },
+    "Shadows": {
+        "enable shadows": "false",
+        "actor shadows": "false",
+        "player shadows": "false",
+        "terrain shadows": "false",
+        "object shadows": "false",
+        "indoor shadows": "false",
+    },
+    "Post Processing": {"enabled": "false"},
+    "Video": {
+        "antialiasing": "0",
+        "vsync": "false",
+        "fullscreen": "true",
+        "window border": "false",
+    },
+    "Terrain": {"distant terrain": "true"},
+    "Input": {
+        "enable controller": "true",
+        "gamepad cursor speed": "0.35",
+        "joystick dead zone": "0.05",
+        "grab cursor": "true",
+    },
+    "GUI": {
+        "controller menus": "true",
+        "controller tooltips": "true",
+    },
+}
+
+for section, settings in values.items():
+    if not config.has_section(section):
+        config.add_section(section)
+    for key, value in settings.items():
+        config.set(section, key, value)
+
+# TSP_INTERNAL_RESOLUTION_PERSIST_051_V20R4
+#
+# Keep the internal resolution already stored in settings.cfg.
+# Only resolutions supplied by the TSP V20 build are considered valid.
+allowed_resolutions = {
+    ("1280", "720"),
+    ("1152", "648"),
+    ("1024", "576"),
+    ("960", "540"),
+    ("800", "450"),
+    ("640", "360"),
+}
+
+if not config.has_section("Video"):
+    config.add_section("Video")
+
+resolution_x = config.get(
+    "Video",
+    "resolution x",
+    fallback="1280",
+).strip()
+
+resolution_y = config.get(
+    "Video",
+    "resolution y",
+    fallback="720",
+).strip()
+
+selected_resolution = (resolution_x, resolution_y)
+
+if selected_resolution not in allowed_resolutions:
+    print(
+        "TSP resolution persistence: invalid",
+        resolution_x + "x" + resolution_y,
+        "-> using 1280x720",
+    )
+    selected_resolution = ("1280", "720")
+else:
+    print(
+        "TSP resolution persistence: preserving",
+        selected_resolution[0] + "x" + selected_resolution[1],
+    )
+
+config.set(
+    "Video",
+    "resolution x",
+    selected_resolution[0],
+)
+
+config.set(
+    "Video",
+    "resolution y",
+    selected_resolution[1],
+)
+
+os.makedirs(os.path.dirname(path), exist_ok=True)
+tmp = path + ".tmp"
+with open(tmp, "w", encoding="utf-8", newline="\n") as handle:
+    config.write(handle, space_around_delimiters=True)
+os.replace(tmp, path)
+print("Applied OpenMW 0.51 settings:", path)
+PY
+
+rm -f "$CONFIG_DIR/openmw/settings.cfg"
+
+CONTROLLER_PROFILE_MARKER="$CONFIG_DIR/.tsp-native-controller-profile-v1"
+
+if [ ! -f "$CONTROLLER_PROFILE_MARKER" ]; then
+    [ -f "$CONFIG_DIR/input_v3.xml" ] && mv -f "$CONFIG_DIR/input_v3.xml" "$CONFIG_DIR/input_v3.before-native-controller.xml"
+    [ -f "$CONFIG_DIR/openmw/input_v3.xml" ] && mv -f "$CONFIG_DIR/openmw/input_v3.xml" "$CONFIG_DIR/openmw/input_v3.before-native-controller.xml"
+    touch "$CONTROLLER_PROFILE_MARKER"
+    echo "Reset OpenMW 0.51 controller bindings."
+fi
+
+echo
+echo "=========================================="
+echo "Final OpenMW 0.51 launch environment"
+echo "=========================================="
+echo "Executable: $OPENMW_BIN"
+echo "Resources: $OPENMW_RESOURCES"
+echo "Libraries: $OPENMW_LIB"
+echo "Config: $CONFIG_DIR"
+echo "Save directory: $SAVE_DIR"
+echo "Combined log: $LOG_FILE"
+echo "Controller mode: native OpenMW 0.51 + TSP hybrid helper"
+echo "gptokeyb2: disabled"
+echo "TSP hybrid helper: $CONTROL_HELPER"
+echo "TSP helper log: $CONTROL_HELPER_LOG"
+echo "SDL_GAMECONTROLLERCONFIG_FILE=$SDL_GAMECONTROLLERCONFIG_FILE"
+echo "LD_LIBRARY_PATH=$LD_LIBRARY_PATH"
+echo "=========================================="
+
+if type pm_platform_helper >/dev/null 2>&1; then
+    pm_platform_helper "$OPENMW_BIN"
+else
+    echo "WARNING: pm_platform_helper is unavailable."
+fi
+
+cleanup_helper() {
+    if [ -n "${CONTROL_HELPER_PID:-}" ] && kill -0 "$CONTROL_HELPER_PID" 2>/dev/null; then
+        echo "Stopping TSP hybrid controller helper (pid $CONTROL_HELPER_PID)..."
+        kill "$CONTROL_HELPER_PID" 2>/dev/null || true
+        sleep 0.1
+        kill -9 "$CONTROL_HELPER_PID" 2>/dev/null || true
+        wait "$CONTROL_HELPER_PID" 2>/dev/null || true
+    fi
+}
+
+cleanup_children() {
+    type tsp_freeze_monitor_stop >/dev/null 2>&1 && tsp_freeze_monitor_stop
+    tsp_cpu_governor_restore 2>/dev/null || true
+    [ -n "${TSP_DRAW_ONLINED:-}" ] && { echo 0 > "$TSP_SYS_CPU/cpu$TSP_DRAW_ONLINED/online" 2>/dev/null; echo "TSP_DRAWTHREAD_V1 cpu$TSP_DRAW_ONLINED back offline (signal path)"; }   # TSP_DRAWTHREAD_V1 CLEAN
+    tsp_cpuclock_restore 2>/dev/null || true   # TSP_CPUCLOCK_V1 CLEAN
+    tsp_lever_restore 2>/dev/null || true
+    type tsp_padcap_stop >/dev/null 2>&1 && tsp_padcap_stop
+    cp -f "$CONTROL_HELPER_LOG" "$GAMEDIR/tsp_helper_last.log" 2>/dev/null || true
+    type tsp_govpin_stop >/dev/null 2>&1 && tsp_govpin_stop
+type tsp_muos_idle_restore >/dev/null 2>&1 && tsp_muos_idle_restore
+type tsp_muos_audio_stop >/dev/null 2>&1 && tsp_muos_audio_stop
+type tsp_swap_release >/dev/null 2>&1 && tsp_swap_release
+    cleanup_helper
+    if [ -n "${OPENMW_PID:-}" ] && kill -0 "$OPENMW_PID" 2>/dev/null; then
+        echo "Stopping OpenMW child process (pid $OPENMW_PID)..."
+        kill "$OPENMW_PID" 2>/dev/null || true
+        sleep 0.2
+        kill -9 "$OPENMW_PID" 2>/dev/null || true
+        wait "$OPENMW_PID" 2>/dev/null || true
+    fi
+    type tsp_zram_release >/dev/null 2>&1 && tsp_zram_release
+}
+
+handle_launcher_signal() {
+    echo "Launcher received a termination signal."
+    cleanup_children
+    exit 143
+}
+
+trap handle_launcher_signal INT TERM HUP
+
+# Remove any stale helper left behind by an interrupted previous launch.
+pkill -9 -f "$CONTROL_HELPER" 2>/dev/null || true
+rm -f "$CONTROL_HELPER_LOG" 2>/dev/null || true
+
+# TSP_PADCAP_V1 -- optional raw evdev capture, armed by a flag file.
+tsp_pad_node() {
+    awk '
+        /^H: Handlers=/ {
+            if ($0 ~ /js[0-9]/) {
+                for (i = 1; i <= NF; i++)
+                    if ($i ~ /^event[0-9]+$/) { print "/dev/input/" $i; exit }
+            }
+        }
+    ' /proc/bus/input/devices 2>/dev/null
+}
+TSP_PADCAP_PID=""
+tsp_padcap_stop() {
+    if [ -n "${TSP_PADCAP_PID:-}" ] && kill -0 "$TSP_PADCAP_PID" 2>/dev/null; then
+        kill -9 "$TSP_PADCAP_PID" 2>/dev/null || true
+        echo "TSP_PADCAP_V1 capture stopped ($(wc -c < "$GAMEDIR/padcap.raw" 2>/dev/null) bytes)"
+    fi
+    TSP_PADCAP_PID=""
+}
+if [ -f "$GAMEDIR/tsp_padcap_on" ]; then
+    TSP_PADCAP_NODE="$(tsp_pad_node)"
+    if [ -n "$TSP_PADCAP_NODE" ] && [ -r "$TSP_PADCAP_NODE" ]; then
+        : > "$GAMEDIR/padcap.raw"
+        cat "$TSP_PADCAP_NODE" > "$GAMEDIR/padcap.raw" &
+        TSP_PADCAP_PID=$!
+        echo "TSP_PADCAP_V1 capturing $TSP_PADCAP_NODE -> $GAMEDIR/padcap.raw (pid $TSP_PADCAP_PID)"
+    else
+        echo "TSP_PADCAP_V1 armed, but no joystick node was found"
+    fi
+fi
+
+# TSP_MUOS_INPUT_CLEAN_V1
+# Deliberately no muOS analog-stick correction is performed by this launcher.
+# No uinput stick proxy, joycal pass, axis rescale, daemon replacement, or
+# other stick transformation is started here.
+# The universal SDL mapping above remains in place: TSP exposes X,Y,Z,RZ as
+# SDL joystick axes 0,1,2,3, so the Smart Pro mapping keeps righty:a3.
+
+# TSP_MUOS_AUDIO_V2 -- muOS-only OpenMW audio path.
+#
+# OpenMW ships OpenAL Soft 1.19.1. Its ALSA backend is usable, but the OpenMW
+# port also ships an old private libasound.so.2. muOS's current system ALSA
+# stack is configured for PipeWire (50-pipewire.conf / 99-pipewire-default.conf),
+# so on muOS we force OpenAL's ALSA backend and preload the SYSTEM libasound.
+#
+# This is deliberately a launcher-only change. No /usr/lib or PipeWire config
+# is modified, no daemon is spawned, and the environment exists only for the
+# OpenMW child. Knulli/CrossMix/stock never enter this branch.
+#
+#   off: touch "$GAMEDIR/tsp_muos_audio_off"
+#
+TSP_MUOS_AUDIO_ACTIVE=0
+TSP_MUOS_AUDIO_OLD_PRELOAD=""
+TSP_MUOS_AUDIO_OLD_DRIVERS="${ALSOFT_DRIVERS+x}"
+TSP_MUOS_AUDIO_OLD_LOGLEVEL="${ALSOFT_LOGLEVEL+x}"
+TSP_MUOS_AUDIO_OLD_LOGFILE="${ALSOFT_LOGFILE+x}"
+TSP_MUOS_AUDIO_OLD_PULSE="${PULSE_SERVER+x}"
+TSP_MUOS_AUDIO_OLD_ALSA_CONFIG="${ALSA_CONFIG_PATH+x}"
+TSP_MUOS_AUDIO_SAVED=0
+
+tsp_muos_audio_stop() {
+    [ "${TSP_MUOS_AUDIO_ACTIVE:-0}" = 1 ] || return 0
+
+    if [ "${TSP_MUOS_AUDIO_SAVED:-0}" = 1 ]; then
+        TSP_LD_PRELOAD="$TSP_MUOS_AUDIO_OLD_PRELOAD"
+        export TSP_LD_PRELOAD
+
+        if [ -n "${TSP_MUOS_AUDIO_OLD_DRIVERS:-}" ]; then
+            export ALSOFT_DRIVERS="$TSP_MUOS_AUDIO_OLD_DRIVERS"
+        else
+            unset ALSOFT_DRIVERS
+        fi
+        if [ -n "${TSP_MUOS_AUDIO_OLD_LOGLEVEL:-}" ]; then
+            export ALSOFT_LOGLEVEL="$TSP_MUOS_AUDIO_OLD_LOGLEVEL"
+        else
+            unset ALSOFT_LOGLEVEL
+        fi
+        if [ -n "${TSP_MUOS_AUDIO_OLD_LOGFILE:-}" ]; then
+            export ALSOFT_LOGFILE="$TSP_MUOS_AUDIO_OLD_LOGFILE"
+        else
+            unset ALSOFT_LOGFILE
+        fi
+        if [ -n "${TSP_MUOS_AUDIO_OLD_PULSE:-}" ]; then
+            export PULSE_SERVER="$TSP_MUOS_AUDIO_OLD_PULSE"
+        else
+            unset PULSE_SERVER
+        fi
+        if [ -n "${TSP_MUOS_AUDIO_OLD_ALSA_CONFIG:-}" ]; then
+            export ALSA_CONFIG_PATH="$TSP_MUOS_AUDIO_OLD_ALSA_CONFIG"
+        else
+            unset ALSA_CONFIG_PATH
+        fi
+    fi
+
+    TSP_MUOS_AUDIO_ACTIVE=0
+    TSP_MUOS_AUDIO_SAVED=0
+    echo "TSP_MUOS_AUDIO_V2 environment restored"
+}
+
+tsp_muos_audio_start() {
+    [ "${TSP_MUOS_AUDIO_ACTIVE:-0}" = 1 ] && return 0
+    [ -d /opt/muos ] || { echo "TSP_MUOS_AUDIO_V2 skipped (not muOS)"; return 0; }
+    [ -f "$GAMEDIR/tsp_muos_audio_off" ] && { echo "TSP_MUOS_AUDIO_V2 off (flag file)"; return 0; }
+    [ -r /usr/lib/libasound.so.2 ] || { echo "TSP_MUOS_AUDIO_V2 skipped (system libasound missing)"; return 0; }
+
+    # Save the launcher state, then make ONLY the OpenMW child use muOS's
+    # system ALSA library and OpenAL's ALSA backend.
+    TSP_MUOS_AUDIO_OLD_PRELOAD="${TSP_LD_PRELOAD:-}"
+    TSP_MUOS_AUDIO_SAVED=1
+
+    if [ -n "${TSP_LD_PRELOAD:-}" ]; then
+        TSP_LD_PRELOAD="/usr/lib/libasound.so.2:$TSP_LD_PRELOAD"
+    else
+        TSP_LD_PRELOAD="/usr/lib/libasound.so.2"
+    fi
+    export TSP_LD_PRELOAD
+
+    export ALSOFT_DRIVERS=alsa
+    export ALSOFT_LOGLEVEL=3
+    export ALSOFT_LOGFILE="$GAMEDIR/openal_soft.log"
+    unset PULSE_SERVER
+
+    TSP_MUOS_AUDIO_ACTIVE=1
+    echo "TSP_MUOS_AUDIO_V2 ALSA/system-libasound active preload=[$TSP_LD_PRELOAD]"
+    echo "TSP_MUOS_AUDIO_V2 OpenAL driver=alsa"
+    echo "TSP_MUOS_AUDIO_V2 using muOS system ALSA/PipeWire configuration"
+}
+
+# TSP_MUOS_GOVPIN_V1 -- muhotkey caches settings/power/gov_idle at BOOT. Editing
+# that file mid-session is ignored, which is why pointing it at performance looked
+# correct and changed nothing. Measured:
+#   22:50:17 idle_state=0 gov=performance cur=2000000  thermal=0 gov_idle=performance
+#   22:50:26 idle_state=1 gov=powersave   cur=408000   thermal=0 gov_idle=performance
+# idle_state flipped with every config knob already set the way we wanted.
+#
+# So stop negotiating and hold the governor directly. A 2s loop rewrites
+# scaling_governor on every policy whenever something moves it off the target.
+# It is a watchdog, not a setting, so it does not care WHAT did the writing.
+#   off:  touch $GAMEDIR/tsp_govpin_off
+#   tune: $GAMEDIR/tsp_gov_pin.txt containing a governor name (default performance)
+TSP_GOVPIN_PID=""
+tsp_govpin_stop() {
+    if [ -n "${TSP_GOVPIN_PID:-}" ] && kill -0 "$TSP_GOVPIN_PID" 2>/dev/null; then
+        kill "$TSP_GOVPIN_PID" 2>/dev/null || true
+        echo "TSP_MUOS_GOVPIN_V1 stopped"
+    fi
+    TSP_GOVPIN_PID=""
+}
+tsp_govpin_start() {
+    [ -d /opt/muos ] || { echo "TSP_MUOS_GOVPIN_V1 skipped (not muOS)"; return 0; }
+    [ -f "$GAMEDIR/tsp_govpin_off" ] && { echo "TSP_MUOS_GOVPIN_V1 off (flag file)"; return 0; }
+    _want=performance
+    [ -s "$GAMEDIR/tsp_gov_pin.txt" ] && read -r _want < "$GAMEDIR/tsp_gov_pin.txt"
+    case "$_want" in ''|*[!a-z_]*) _want=performance ;; esac
+    if ! grep -qw "$_want" /sys/devices/system/cpu/cpu0/cpufreq/scaling_available_governors 2>/dev/null; then
+        echo "TSP_MUOS_GOVPIN_V1 skipped ('$_want' not an available governor)"
+        return 0
+    fi
+    (
+        _n=0
+        _fixed=0
+        while [ "$_n" -lt 10800 ]; do
+            for _g in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do
+                [ -w "$_g" ] || continue
+                _cur=$(cat "$_g" 2>/dev/null)
+                if [ "$_cur" != "$_want" ]; then
+                    printf '%s' "$_want" > "$_g" 2>/dev/null
+                    _fixed=$((_fixed + 1))
+                    [ "$_fixed" -le 3 ] && echo "TSP_MUOS_GOVPIN_V1 corrected $_cur -> $_want"
+                    [ "$_fixed" -eq 4 ] && echo "TSP_MUOS_GOVPIN_V1 (further corrections not logged)"
+                fi
+            done
+            _n=$((_n + 1))
+            sleep 2
+        done
+    ) &
+    TSP_GOVPIN_PID=$!
+    echo "TSP_MUOS_GOVPIN_V1 holding governor at '$_want' (pid $TSP_GOVPIN_PID)"
+}
+tsp_govpin_start
+
+
+echo "Starting TSP hybrid controller helper..."
+"$CONTROL_HELPER" "$CONTROL_HELPER_LOG" &
+CONTROL_HELPER_PID=$!
+
+sleep 0.4
+
+if ! kill -0 "$CONTROL_HELPER_PID" 2>/dev/null; then
+    echo "ERROR: TSP hybrid controller helper exited during startup."
+    if [ -f "$CONTROL_HELPER_LOG" ]; then
+        echo "----- TSP helper log -----"
+        cat "$CONTROL_HELPER_LOG"
+        echo "----- end TSP helper log -----"
+    fi
+    pm_gptokeyb_finish
+    pm_finish
+    exit 1
+fi
+
+echo "TSP hybrid helper running as pid: $CONTROL_HELPER_PID"
+echo "Controls:"
+echo "  MENU+START = toggle hybrid mouse/text mode"
+echo "  START+SELECT held 2 seconds = emergency terminate OpenMW"
+
+sleep 0.2
+
+
+# TSP_CURSOR_LAUNCHER_DEBUG_V1
+# Disabled for V23 macro1 performance/raycast validation.
+# Cursor functionality itself is unchanged.
+
+
+# >>> TSP_VISGRID_V24_ROOM_RESIDENCY BEGIN
+# Fixed V24 profile: raw navmesh-sector room residency + continuous 5/6-ray learning.
+TSP_VISGRID_DIR="$GAMEDIR/mods/TSPInteriorVisGrid/scripts/TSPInteriorVisGrid"
+TSP_VISGRID_LIVE="$TSP_VISGRID_DIR/visgrid.lua"
+TSP_VISGRID_SELECTED="$TSP_VISGRID_DIR/v30_profiles/visgrid-v30-floor-actor-roomwake.lua"
+if [ ! -s "$TSP_VISGRID_SELECTED" ]; then
+    echo "ERROR: V24 room-residency profile is missing:"
+    echo "  $TSP_VISGRID_SELECTED"
+    exit 72
+fi
+TSP_VISGRID_SELECTED_SHA="$(sha256sum "$TSP_VISGRID_SELECTED" | awk 'NF {print $1; exit}')"
+TSP_VISGRID_LIVE_SHA=""
+[ -s "$TSP_VISGRID_LIVE" ] && TSP_VISGRID_LIVE_SHA="$(sha256sum "$TSP_VISGRID_LIVE" | awk 'NF {print $1; exit}')"
+if [ "$TSP_VISGRID_SELECTED_SHA" != "$TSP_VISGRID_LIVE_SHA" ]; then
+    cp -f "$TSP_VISGRID_SELECTED" "$TSP_VISGRID_LIVE.v24-new"
+    chmod 644 "$TSP_VISGRID_LIVE.v24-new" 2>/dev/null || true
+    mv -f "$TSP_VISGRID_LIVE.v24-new" "$TSP_VISGRID_LIVE"
+    sync
+fi
+export TSP_OBJECT_DIAG=0  # V26 compact diagnostics only
+echo "Visgrid Profile=v30-floor-actor-roomwake"
+echo "Visgrid SHA=$(sha256sum "$TSP_VISGRID_LIVE" | awk 'NF {print $1; exit}')"
+echo "Visgrid room policy=V26 hard delete; FLOOR authority + earlier same-floor portal prewake + actor hibernation"
+# <<< TSP_VISGRID_V24_ROOM_RESIDENCY END
+
+echo "Launching OpenMW 0.51..."
+
+
+
+
+
+
+
+
+# >>> TSP_V19_RUNTIME_PROFILE BEGIN
+
+# >>> TSP_V23_QUIET_DIAGNOSTICS BEGIN
+#
+# Retained while profiling:
+#   - TSP_VISGRID_V23PERF Lua ray/performance telemetry
+#   - low-overhead tsp_perf_sampler
+#   - on-screen FPS overlay
+#
+# Unrelated diagnostic systems are forced OFF.
+export TSP_TEXTURE_DEBUG=0
+export TSP_OBJECT_DIAG=0  # V26 compact diagnostics only  # TSP_OBJECT_DIAG_051_V1 temporary object/render/pick trace
+unset OPENMW_OSG_STATS_FILE OPENMW_OSG_STATS_LIST
+# <<< TSP_V23_QUIET_DIAGNOSTICS END
+
+
+# Normal gameplay: expensive diagnostic samplers OFF.
+
+# Keep FPS visible for initial benchmarking.
+
+# Failed GL4ES intermediary framebuffer experiment stays OFF.
+unset LIBGL_FB
+unset LIBGL_FBO
+unset LIBGL_RECYCLEFBO
+
+# >>> Deep diagnostics can temporarily be restored with:
+
+# <<< TSP_V19_RUNTIME_PROFILE END
+
+# TSP_GL4ES_DYNAMIC_INTERNAL_SCALE_051_V21
+#
+# OpenMW/SDL stays physically 1280x720.
+# The selected Video resolution controls GL4ES's intermediary framebuffer.
+tsp_apply_internal_render_scale() {
+    # TSP_V33_FPS_TEXTURE_BENCHMARK
+
+    TSP_INTERNAL_X="$(
+        awk -F= '
+            /^\[Video\]/ {
+                video=1
+                next
+            }
+
+            /^\[/ {
+                video=0
+            }
+
+            video {
+                key=$1
+                gsub(/^[ \t]+/, "", key)
+                gsub(/[ \t]+$/, "", key)
+
+                if (key == "resolution x") {
+                    value=$2
+                    gsub(/^[ \t]+/, "", value)
+                    gsub(/[ \t]+$/, "", value)
+                    print value
+                    exit
+                }
+            }
+        ' "$SETTINGS_FILE"
+    )"
+
+    TSP_INTERNAL_Y="$(
+        awk -F= '
+            /^\[Video\]/ {
+                video=1
+                next
+            }
+
+            /^\[/ {
+                video=0
+            }
+
+            video {
+                key=$1
+                gsub(/^[ \t]+/, "", key)
+                gsub(/[ \t]+$/, "", key)
+
+                if (key == "resolution y") {
+                    value=$2
+                    gsub(/^[ \t]+/, "", value)
+                    gsub(/[ \t]+$/, "", value)
+
+                    print value
+                    exit
+                }
+            }
+        ' "$SETTINGS_FILE"
+    )"
+
+    TSP_INTERNAL_RESOLUTION="${TSP_INTERNAL_X}x${TSP_INTERNAL_Y}"
+
+    case "$TSP_INTERNAL_RESOLUTION" in
+        1280x720|1152x648|1024x576|960x540|800x450|640x360)
+            ;;
+        *)
+            TSP_INTERNAL_X=1280
+            TSP_INTERNAL_Y=720
+            TSP_INTERNAL_RESOLUTION=1280x720
+            ;;
+    esac
+
+    # --------------------------------------------------------
+    # Switchable texture benchmark.
+    #
+    # 0 = no geometric shrink
+    # 3 = any texture dimension >256 gets /2
+    # 4 = >256 gets /2, >1024 gets /4
+    # --------------------------------------------------------
+
+    TSP_TEXTURE_PROFILE_FILE="$GAMEDIR/tsp_texture_shrink_mode.txt"
+    TSP_TEXTURE_SHRINK=0
+
+    if [ -f "$TSP_TEXTURE_PROFILE_FILE" ]; then
+        TSP_TEXTURE_SHRINK="$(
+            tr -cd '0-9' < "$TSP_TEXTURE_PROFILE_FILE" |
+                head -c 2
+        )"
+    fi
+
+    case "$TSP_TEXTURE_SHRINK" in
+        0|3|4)
+            ;;
+        *)
+            TSP_TEXTURE_SHRINK=0
+            ;;
+    esac
+
+    # TSP_V34_TEXTURE_DEBUG_HOOK
+    if [ "${TSP_TEXTURE_DEBUG:-0}" = "1" ]; then
+        TSP_TEXTURE_SHRINK=12
+    fi
+
+    export LIBGL_SHRINK="$TSP_TEXTURE_SHRINK"
+
+    # Preserve the currently-good mipmap behavior.
+    export LIBGL_FORCENPOT=0
+    export LIBGL_MIPMAP=5
+    export LIBGL_AVOID16BITS=1
+
+    # Deprecated DXT bit-depth switch; it is not geometric scaling.
+    unset LIBGL_NODOWNSAMPLING
+
+    # --------------------------------------------------------
+    # Keep the proven V32 direct framebuffer + swap scaler.
+    # --------------------------------------------------------
+
+    unset LIBGL_FB
+    unset LIBGL_FBO
+    unset LIBGL_RECYCLEFBO
+    unset LIBGL_TSP_OUTPUT
+
+    # V33 draws FPS after final presentation.
+    export TSP_FPS_OVERLAY=0
+    export TSP_SCALE_OUTPUT=1280x720
+    export TSP_SCALE_FILTER=linear
+
+    # Keep V33 loaded even at native resolution so FPS stays visible.
+    TSP_GL4ES_LIBRARY="${TSP_GL4ES_OVERRIDE:-$GAMEDIR/lib/libGL.so.1}"
+
+#export MALLOC_CHECK_=3
+#export MALLOC_PERTURB_=170
+unset TSP_MPW_OUT
+unset TSP_MPW_SECS
+export OPENMW_TSP_FIX_NULL_VIEWPORT=1
+# TSP_RINGARM_V2 - restored 2026-09-11. V1 was lost and the launcher had reverted to
+# the three unset lines, so the profiler ran on compiled defaults: trigger 0, meaning
+# it armed a capture on EVERY frame. Everything below refuses to export a junk value.
+if [ -f /mnt/SDCARD/tsp_ring_off ] || [ "$TSP_QUIET" = 1 ]; then   # TSP_QUIET_V1 RING
+    unset OPENMW_TSP_RING
+    unset OPENMW_TSP_RING_TRIGGER_MS
+    unset OPENMW_TSP_RING_MAX_DUMPS
+    echo "TSP_RINGARM_V2 disabled by /mnt/SDCARD/tsp_ring_off" >> "$TSP_PROG"
+else
+    if [ -f /mnt/SDCARD/tsp_ring.conf ]; then . /mnt/SDCARD/tsp_ring.conf; fi
+    case "${TSP_RING_TRIG:-}" in ''|*[!0-9]*) TSP_RING_TRIG=60 ;; esac
+    case "${TSP_RING_MAX:-}"  in ''|*[!0-9]*) TSP_RING_MAX=12 ;; esac
+    if [ "$TSP_RING_TRIG" -lt 20 ] 2>/dev/null; then TSP_RING_TRIG=60; fi
+    if [ "$TSP_RING_MAX" -lt 1 ] 2>/dev/null;  then TSP_RING_MAX=12; fi
+    export OPENMW_TSP_RING=/mnt/SDCARD/tsp_ring
+    export OPENMW_TSP_RING_TRIGGER_MS="$TSP_RING_TRIG"
+    export OPENMW_TSP_RING_MAX_DUMPS="$TSP_RING_MAX"
+    echo "TSP_RINGARM_V2 armed trigger=$TSP_RING_TRIG max=$TSP_RING_MAX out=/mnt/SDCARD/tsp_ring" >> "$TSP_PROG"
+fi
+
+# TSP_KTXWARM_V1 - the ASTC conversion turned 3 sequential .bsa reads into 4555 loose
+# ~12 KB .ktx files. Measured 2026-09-10: the first 5 s after a save load ran 51.9
+# major faults/sec with 34.2% of frames faulting, against 3.6% later in the session.
+# 56 MB of textures against ~540 MB MemAvailable, so read the tree into the page cache
+# in the background while the menu is up. Off: touch /mnt/SDCARD/tsp_ktxwarm_off
+TSP_KTXDIR="$GAMEDIR/data/Data Files/textures"
+if [ ! -f /mnt/SDCARD/tsp_ktxwarm_off ] && [ -d "$TSP_KTXDIR" ]; then
+    (
+        TSP_KTXT0=$(date +%s)
+        TSP_KTXHOW=tar
+        if ! tar -cf /dev/null -C "$TSP_KTXDIR" . >/dev/null 2>&1; then
+            TSP_KTXHOW=cat
+            find "$TSP_KTXDIR" -name '*.ktx' 2>/dev/null | while IFS= read -r tsp_t; do
+                cat "$tsp_t"
+            done >/dev/null 2>&1
+        fi
+        echo "TSP_KTXWARM_V1 done via=$TSP_KTXHOW secs=$(( $(date +%s) - TSP_KTXT0 )) cached_kb=$(awk '/^Cached:/{print $2}' /proc/meminfo)" >> "$TSP_PROG"
+    ) &
+    echo "TSP_KTXWARM_V1 started dir=$TSP_KTXDIR cached_kb=$(awk '/^Cached:/{print $2}' /proc/meminfo)" >> "$TSP_PROG"
+else
+    echo "TSP_KTXWARM_V1 skipped (off switch present or dir missing)" >> "$TSP_PROG"
+fi
+unset TSP_STATE
+unset TSP_STATE_OUT
+unset TSP_STATE_MAX
+    export TSP_NO_CELL_GLRELEASE=1
+unset TSP_CRASH_OUT
+    TSP_LD_PRELOAD="$GAMEDIR/lib/libtsp_warm.so:$GAMEDIR/lib/libtsp_fullscreen_scaler.so:$TSP_GL4ES_LIBRARY"
+
+    # TSP_SDL_SENSOR_FALLBACK_051_V29: the shim has to interpose SDL_Init
+    # before anything else pulls SDL in.
+    if [ "${TSP_SDL_SHIM_ACTIVE:-0}" = "1" ]; then
+        TSP_LD_PRELOAD="$TSP_SDL_SHIM:$TSP_LD_PRELOAD"
+    fi
+
+    if [ "${TSP_TEXTURE_DEBUG:-0}" = "1" ]; then
+        echo "Texture debug:    ON"
+        echo "Texture GL4ES:    $TSP_GL4ES_LIBRARY"
+        echo "Near/base scale:  1/2 dimensions (>128px)"
+        echo "Distant mip 1:    ~1/4 original dimensions"
+    else
+        echo "Texture debug:    OFF"
+    fi
+
+    if [ "$TSP_INTERNAL_RESOLUTION" = "1280x720" ]; then
+        export TSP_FULLSCREEN_SCALE=0
+        export TSP_SCALE_SOURCE=1280x720
+
+        echo
+        echo "=========================================="
+        echo "TSP V33 FPS + TEXTURE BENCHMARK"
+        echo "=========================================="
+        echo "Internal raster: 1280x720"
+        echo "Physical output: 1280x720"
+        echo "Fullscreen scale: OFF"
+        echo "FPS counter:      ON"
+        echo "Texture shrink:   $TSP_TEXTURE_SHRINK"
+        echo "=========================================="
+    else
+        export TSP_FULLSCREEN_SCALE=1
+        export TSP_SCALE_SOURCE="$TSP_INTERNAL_RESOLUTION"
+
+        echo
+        echo "=========================================="
+        echo "TSP V33 FPS + TEXTURE BENCHMARK"
+        echo "=========================================="
+        echo "Internal raster: $TSP_INTERNAL_RESOLUTION"
+        echo "Physical output: 1280x720"
+        echo "Fullscreen scale: ON"
+        echo "FPS counter:      ON"
+        echo "Texture shrink:   $TSP_TEXTURE_SHRINK"
+        echo "GL4ES FBO mode:   OFF"
+        echo "Weston/X11:       OFF"
+        echo "=========================================="
+    fi
+}
+
+# TSP_INTERNAL_RESOLUTION_AUTORESTART_LAUNCHER_051_V20R4
+#
+# A marker must only survive long enough to request one immediate restart.
+rm -f "$RESOLUTION_RESTART_MARKER" 2>/dev/null || true
+
+while :
+do
+    # TSP_GL4ES_DYNAMIC_INTERNAL_SCALE_CALL_051_V21
+    tsp_apply_internal_render_scale
+
+# TSP_V35_2_TEXT_SCALE_LOADING_POLICY
+
+#
+# LOADING:
+#
+# Keep V35's one-shot framebuffer-capture fix inside OpenMW,
+# but do NOT create the loading-bypass marker.
+#
+# Therefore the V35 fullscreen scaler keeps stretching loading
+# frames just like gameplay instead of exposing their raw
+# internal-resolution framebuffer.
+#
+rm -f /tmp/openmw-tsp-loading-active 2>/dev/null || true
+
+#
+# TEXT SIZE:
+#
+# Separate from whole-GUI scaling.
+#
+TSP_UI_FONT_PROFILE="$GAMEDIR/tsp_ui_font_size.txt"
+
+TSP_UI_FONT_SIZE="$(
+    tr -cd '0-9' < "$TSP_UI_FONT_PROFILE" 2>/dev/null |
+    head -c 2
+)"
+
+case "$TSP_UI_FONT_SIZE" in
+    12|13|14|15|16|17|18|19|20|21|22|23|24|25|26|27|28|29|30|31|32)
+        ;;
+    *)
+        TSP_UI_FONT_SIZE=28
+        echo 28 > "$TSP_UI_FONT_PROFILE"
+        ;;
+esac
+
+python3 - "$CONFIG_DIR/settings.cfg" "$TSP_UI_FONT_SIZE" <<'TSP_FONT_PY'
+import configparser
+import os
+import sys
+
+path = sys.argv[1]
+font_size = sys.argv[2]
+
+cfg = configparser.ConfigParser(
+    interpolation=None,
+    strict=False,
+    empty_lines_in_values=False,
+)
+
+cfg.optionxform = str
+
+if os.path.isfile(path):
+    with open(
+        path,
+        "r",
+        encoding="utf-8",
+        errors="replace",
+    ) as f:
+        cfg.read_file(f)
+
+if not cfg.has_section("GUI"):
+    cfg.add_section("GUI")
+
+cfg.set("GUI", "scaling factor", "1.0")
+cfg.set("GUI", "font size", font_size)
+
+tmp = path + ".font.tmp"
+
+with open(
+    tmp,
+    "w",
+    encoding="utf-8",
+    newline="\n",
+) as f:
+    cfg.write(
+        f,
+        space_around_delimiters=True,
+    )
+
+os.replace(tmp, path)
+TSP_FONT_PY
+
+echo "Text-only UI scale:"
+echo "  GUI geometry = 1.0"
+echo "  font size    = $TSP_UI_FONT_SIZE"
+echo "Loading:"
+echo "  fullscreen scaler remains ON during loading"
+
+
+    echo "TSP resolution launcher: starting OpenMW"
+
+    # TSP_PORT_LOCAL_GL4ES_PRELOAD_051_V22
+# >>> TSP_V36_PERF_TELEMETRY BEGIN
+# Low-overhead 2-second TSP performance sampler.
+# Expensive engine debug remains OFF during benchmarks.
+
+TSP_PERF_LOG="$GAMEDIR/openmw_perf_latest.txt"
+TSP_PERF_PREVIOUS="$GAMEDIR/openmw_perf_previous.txt"
+TSP_PERF_SETTINGS="$CONFIG_DIR/settings.cfg"
+TSP_PERF_MONITOR_PID=""
+
+
+# Normal launch: no GL4ES geometric texture shrinking.
+# TextureDebug may still explicitly opt into its own debug path.
+if [ "${TSP_TEXTURE_DEBUG:-0}" != "1" ]; then
+    TSP_TEXTURE_SHRINK=0
+    export LIBGL_SHRINK=0
+    printf '0\n' > "$GAMEDIR/tsp_texture_shrink_mode.txt"
+fi
+
+tsp_perf_setting_dump() {
+    echo "----- Relevant OpenMW settings -----"
+
+    awk '
+        BEGIN {
+            section=""
+        }
+
+        /^\[/ {
+            section=$0
+        }
+
+        {
+            line=tolower($0)
+
+            if (
+                line ~ /^[[:space:]]*(resolution x|resolution y|viewing distance|small feature culling|small feature culling pixel size|distant terrain|vertex lod mod|lod factor|composite map level|composite map resolution|max composite geometry size|object paging|object paging active grid|object paging merge factor|object paging min size|water culling|actors processing range|async num threads|async nav mesh updater threads|min update interval ms|preload enabled|preload num threads|target framerate|anisotropy|texture mag filter|texture min filter|texture mipmap)[[:space:]]*=/
+            ) {
+                print section
+                print $0
+            }
+        }
+    ' "$TSP_PERF_SETTINGS" \
+        2>/dev/null |
+        awk '!seen[$0]++'
+}
+
+tsp_perf_monitor() {
+    PERF_PID="$1"
+
+    set +e
+
+    if [ -f "$TSP_PERF_LOG" ]; then
+        cp -f \
+            "$TSP_PERF_LOG" \
+            "$TSP_PERF_PREVIOUS" \
+            2>/dev/null ||
+            true
+    fi
+
+    CPU_COUNT="$(
+        getconf _NPROCESSORS_ONLN \
+            2>/dev/null ||
+        true
+    )"
+
+    case "$CPU_COUNT" in
+        ''|*[!0-9]*)
+            CPU_COUNT=1
+            ;;
+    esac
+
+    [ "$CPU_COUNT" -gt 0 ] \
+        2>/dev/null ||
+        CPU_COUNT=1
+
+    GPU_FREQ_FILES=""
+
+    for f in /sys/class/devfreq/*/cur_freq; do
+        [ -r "$f" ] || continue
+
+        GPU_FREQ_FILES="$GPU_FREQ_FILES $f"
+    done
+
+    {
+        echo \
+            "============================================================"
+        echo \
+            "OPENMW 0.51 TSP PERFORMANCE TELEMETRY"
+        echo \
+            "============================================================"
+
+        echo "Started: $(date)"
+        echo "OpenMW PID: $PERF_PID"
+        echo "CPU cores online: $CPU_COUNT"
+
+        echo \
+            "Internal resolution: " \
+            "${TSP_INTERNAL_RESOLUTION:-unknown}"
+
+        echo \
+            "TSP_FULLSCREEN_SCALE=" \
+            "${TSP_FULLSCREEN_SCALE:-0}"
+
+        echo \
+            "TSP_SCALE_SOURCE=" \
+            "${TSP_SCALE_SOURCE:-unset}"
+
+        echo \
+            "TSP_SCALE_OUTPUT=" \
+            "${TSP_SCALE_OUTPUT:-unset}"
+
+        echo \
+            "TSP_SCALE_FILTER=" \
+            "${TSP_SCALE_FILTER:-unset}"
+
+        echo \
+            "LIBGL_SHRINK=" \
+            "${LIBGL_SHRINK:-unset}"
+
+        echo \
+            "TSP_TEXTURE_DEBUG=" \
+            "${TSP_TEXTURE_DEBUG:-0}"
+
+        echo \
+
+        echo \
+
+        echo \
+            "OSG_THREADING=" \
+            "${OSG_THREADING:-unset}"
+
+        echo \
+            "LIBGL_MIPMAP=" \
+            "${LIBGL_MIPMAP:-unset}"
+
+        echo \
+            "LIBGL_FORCENPOT=" \
+            "${LIBGL_FORCENPOT:-unset}"
+
+        echo \
+            "LIBGL_AVOID16BITS=" \
+            "${LIBGL_AVOID16BITS:-unset}"
+
+        echo \
+            "LIBGL_STREAM=" \
+            "${LIBGL_STREAM:-unset}"
+
+        echo \
+            "OPENMW_DECOMPRESS_TEXTURES=" \
+            "${OPENMW_DECOMPRESS_TEXTURES:-unset}"
+
+        echo
+        tsp_perf_setting_dump
+        echo
+
+        echo \
+            "Samples every 2 seconds; " \
+            "proc_cpu_pct: 100%=one fully busy core."
+
+        echo \
+            "psi10 = CPU/memory/I/O Linux pressure avg10."
+
+        echo \
+            "============================================================"
+    } > "$TSP_PERF_LOG"
+
+    PREV_TOTAL=""
+    PREV_PROC=""
+    START_SECONDS="$SECONDS"
+
+    while kill -0 "$PERF_PID" 2>/dev/null; do
+        NOW="$(
+            date '+%H:%M:%S' \
+                2>/dev/null ||
+            echo time
+        )"
+
+        ELAPSED=$((
+            SECONDS - START_SECONDS
+        ))
+
+        TOTAL="$(
+            awk '
+                /^cpu / {
+                    s=0
+
+                    for(i=2; i<=NF; i++)
+                        s += $i
+
+                    print s
+                    exit
+                }
+            ' /proc/stat \
+                2>/dev/null
+        )"
+
+        PROC="$(
+            awk \
+                '{print $14+$15}' \
+                "/proc/$PERF_PID/stat" \
+                2>/dev/null
+        )"
+
+        PROC_CPU="n/a"
+
+        if [ -n "$PREV_TOTAL" ] &&
+           [ -n "$PREV_PROC" ] &&
+           [ -n "$TOTAL" ] &&
+           [ -n "$PROC" ]
+        then
+            PROC_CPU="$(
+                awk \
+                    -v p="$PROC" \
+                    -v pp="$PREV_PROC" \
+                    -v t="$TOTAL" \
+                    -v pt="$PREV_TOTAL" \
+                    -v n="$CPU_COUNT" \
+                    'BEGIN {
+                        dt=t-pt
+                        dp=p-pp
+
+                        if(dt>0)
+                            printf "%.1f", (100.0*dp*n)/dt
+                        else
+                            print "0.0"
+                    }'
+            )"
+        fi
+
+        PREV_TOTAL="$TOTAL"
+        PREV_PROC="$PROC"
+
+        RSS_KB="$(
+            awk \
+                '/^VmRSS:/ {print $2; exit}' \
+                "/proc/$PERF_PID/status" \
+                2>/dev/null
+        )"
+
+        VSZ_KB="$(
+            awk \
+                '/^VmSize:/ {print $2; exit}' \
+                "/proc/$PERF_PID/status" \
+                2>/dev/null
+        )"
+
+        THREADS="$(
+            awk \
+                '/^Threads:/ {print $2; exit}' \
+                "/proc/$PERF_PID/status" \
+                2>/dev/null
+        )"
+
+        VOL="$(
+            awk \
+                '/^voluntary_ctxt_switches:/ {print $2; exit}' \
+                "/proc/$PERF_PID/status" \
+                2>/dev/null
+        )"
+
+        NONVOL="$(
+            awk \
+                '/^nonvoluntary_ctxt_switches:/ {print $2; exit}' \
+                "/proc/$PERF_PID/status" \
+                2>/dev/null
+        )"
+
+        READ_B="$(
+            awk \
+                '/^read_bytes:/ {print $2; exit}' \
+                "/proc/$PERF_PID/io" \
+                2>/dev/null
+        )"
+
+        WRITE_B="$(
+            awk \
+                '/^write_bytes:/ {print $2; exit}' \
+                "/proc/$PERF_PID/io" \
+                2>/dev/null
+        )"
+
+        MEM_AVAIL="$(
+            awk \
+                '/^MemAvailable:/ {print $2; exit}' \
+                /proc/meminfo \
+                2>/dev/null
+        )"
+
+        LOAD1="$(
+            awk \
+                '{print $1}' \
+                /proc/loadavg \
+                2>/dev/null
+        )"
+
+        PSI_CPU="$(
+            awk '
+                /^some / {
+                    for(i=1; i<=NF; i++) {
+                        if($i ~ /^avg10=/) {
+                            sub(/^avg10=/, "", $i)
+                            print $i
+                            exit
+                        }
+                    }
+                }
+            ' /proc/pressure/cpu \
+                2>/dev/null
+        )"
+
+        PSI_MEM="$(
+            awk '
+                /^some / {
+                    for(i=1; i<=NF; i++) {
+                        if($i ~ /^avg10=/) {
+                            sub(/^avg10=/, "", $i)
+                            print $i
+                            exit
+                        }
+                    }
+                }
+            ' /proc/pressure/memory \
+                2>/dev/null
+        )"
+
+        PSI_IO="$(
+            awk '
+                /^some / {
+                    for(i=1; i<=NF; i++) {
+                        if($i ~ /^avg10=/) {
+                            sub(/^avg10=/, "", $i)
+                            print $i
+                            exit
+                        }
+                    }
+                }
+            ' /proc/pressure/io \
+                2>/dev/null
+        )"
+
+        CPU_MIN=""
+        CPU_MAX=""
+
+        for f in \
+            /sys/devices/system/cpu/cpu[0-9]*/cpufreq/scaling_cur_freq
+        do
+            [ -r "$f" ] || continue
+
+            V="$(
+                cat "$f" \
+                    2>/dev/null
+            )"
+
+            case "$V" in
+                ''|*[!0-9]*)
+                    continue
+                    ;;
+            esac
+
+            if [ -z "$CPU_MIN" ] ||
+               [ "$V" -lt "$CPU_MIN" ]
+            then
+                CPU_MIN="$V"
+            fi
+
+            if [ -z "$CPU_MAX" ] ||
+               [ "$V" -gt "$CPU_MAX" ]
+            then
+                CPU_MAX="$V"
+            fi
+        done
+
+        MAX_TEMP=""
+
+        for f in \
+            /sys/class/thermal/thermal_zone*/temp
+        do
+            [ -r "$f" ] || continue
+
+            V="$(
+                cat "$f" \
+                    2>/dev/null
+            )"
+
+            case "$V" in
+                ''|*[!0-9-]*)
+                    continue
+                    ;;
+            esac
+
+            if [ -z "$MAX_TEMP" ] ||
+               [ "$V" -gt "$MAX_TEMP" ]
+            then
+                MAX_TEMP="$V"
+            fi
+        done
+
+        DEVFREQ=""
+
+        for f in $GPU_FREQ_FILES; do
+            [ -r "$f" ] || continue
+
+            V="$(
+                cat "$f" \
+                    2>/dev/null
+            )"
+
+            D="$(
+                basename \
+                    "$(dirname "$f")"
+            )"
+
+            DEVFREQ="${
+                DEVFREQ
+            }${
+                DEVFREQ:+,
+            }${D}:${V}"
+        done
+
+        printf \
+            '%s elapsed=%ss proc_cpu_pct=%s rss_kb=%s vsz_kb=%s threads=%s load1=%s memavail_kb=%s psi10=%s/%s/%s cpu_khz=%s-%s temp_mC=%s ctxt=%s/%s io_bytes=%s/%s devfreq=%s\n' \
+            "$NOW" \
+            "$ELAPSED" \
+            "$PROC_CPU" \
+            "${RSS_KB:-na}" \
+            "${VSZ_KB:-na}" \
+            "${THREADS:-na}" \
+            "${LOAD1:-na}" \
+            "${MEM_AVAIL:-na}" \
+            "${PSI_CPU:-na}" \
+            "${PSI_MEM:-na}" \
+            "${PSI_IO:-na}" \
+            "${CPU_MIN:-na}" \
+            "${CPU_MAX:-na}" \
+            "${MAX_TEMP:-na}" \
+            "${VOL:-na}" \
+            "${NONVOL:-na}" \
+            "${READ_B:-na}" \
+            "${WRITE_B:-na}" \
+            "${DEVFREQ:-na}" \
+            >> "$TSP_PERF_LOG"
+
+        sleep 2
+    done
+
+    {
+        echo \
+            "============================================================"
+
+        echo \
+            "Monitor stopped: $(date)"
+
+        echo \
+            "============================================================"
+    } >> "$TSP_PERF_LOG"
+}
+
+
+# TSP_PERF_SAMPLER_V1
+# Replaces tsp_perf_monitor. The old one spawned ~20 processes per 2-second
+# sample (date, a dozen awks, cats over cpufreq/thermal). With LD_PRELOAD
+# exported those each loaded gl4es plus five shims - roughly 50,000 process
+# spawns and library mappings over a 45-minute session, against an SD card
+# that is already the bottleneck. It also produced zero rows on device.
+#
+# This one spawns NOTHING per sample: pure shell reads of /proc.
+tsp_perf_sampler() {
+    PERF_PID="$1"
+
+    # One-shot header. Everything after this is pure shell reads of /proc -
+    # no awk, no cat, no command substitution in the sampling loop, so the
+    # sampler spawns exactly zero processes per sample instead of ~20.
+    {
+        printf '# openmw perf sampler  pid=%s\n' "$PERF_PID"
+        printf '# t=seconds rss/vsz/memavail/memfree in kB, psi=avg10 pressure\n'
+        printf '# t rss_kb vsz_kb threads memavail_kb memfree_kb psi_cpu psi_mem psi_io utime stime majflt\n'
+    } > "$TSP_PERF_LOG"
+
+    T=0
+    while kill -0 "$PERF_PID" 2>/dev/null; do
+        RSS=na; VSZ=na; THR=na
+        while read -r k v _; do
+            case "$k" in
+                VmRSS:)   RSS=$v ;;
+                VmSize:)  VSZ=$v ;;
+                Threads:) THR=$v ;;
+            esac
+        done < "/proc/$PERF_PID/status"
+
+        MA=na; MF=na
+        while read -r k v _; do
+            case "$k" in
+                MemAvailable:) MA=$v ;;
+                MemFree:)      MF=$v ;;
+            esac
+        done < /proc/meminfo
+
+        PC=na; PM=na; PI=na
+        if [ -r /proc/pressure/cpu ]; then
+            while read -r kind rest; do
+                case "$kind" in some) set -- $rest; PC=${1#avg10=} ;; esac
+            done < /proc/pressure/cpu
+        fi
+        if [ -r /proc/pressure/memory ]; then
+            while read -r kind rest; do
+                case "$kind" in some) set -- $rest; PM=${1#avg10=} ;; esac
+            done < /proc/pressure/memory
+        fi
+        if [ -r /proc/pressure/io ]; then
+            while read -r kind rest; do
+                case "$kind" in some) set -- $rest; PI=${1#avg10=} ;; esac
+            done < /proc/pressure/io
+        fi
+
+        UT=na; ST=na; MJ=na
+        read -r _ _ _ _ _ _ _ _ _ _ _ MJ _ UT ST _ < "/proc/$PERF_PID/stat"
+
+        printf '%s %s %s %s %s %s %s %s %s %s %s %s\n' \
+            "$T" "$RSS" "$VSZ" "$THR" "$MA" "$MF" \
+            "$PC" "$PM" "$PI" "$UT" "$ST" "$MJ" >> "$TSP_PERF_LOG"
+
+        T=$((T + 2))
+        sleep 2
+    done
+
+    printf '# sampler stopped at t=%s\n' "$T" >> "$TSP_PERF_LOG"
+}
+
+# TSP_CPU_OPTIMIZE_V2
+# Measured: OpenMW ran with Cpus_allowed_list=0-1 - two little cores at a
+# fixed 1.416 GHz - while cpu4 sat online at up to 2.16 GHz and unused. The
+# root cpuset permits 0-1,4 and a plain process gets 0-7, so nothing in the
+# kernel was enforcing that; something in the launch chain set it.
+#
+# v1 died because BusyBox taskset takes a HEX MASK, not "-c <list>", and I
+# never probed it before putting it in front of the game - so its failure
+# meant OpenMW never started. v2 probes first and can only ever be a no-op.
+#
+# Layout, portable across both devices:
+#   main thread  -> the fastest single core   (cpu4 on the S, cpu0 on a
+#                                              4-core Smart Pro)
+#   every other  -> the remaining online cores
+#
+# Threads inherit the affinity of whoever created them, so pinning the main
+# thread at exec would drag every worker onto the fast core too. The split is
+# therefore applied a few times AFTER launch, once the workers exist.
+#
+# $GAMEDIR/tsp_cpu_policy.txt:  auto (default) | off
+
+tsp_cpu_mask() {
+    # cpu list "0,1,4" -> hex mask "13"
+    _m=0
+    _OI=$IFS; IFS=,
+    for _c in $1; do
+        case "$_c" in ''|*[!0-9]*) continue ;; esac
+        _m=$(( _m | (1 << _c) ))
+    done
+    IFS=$_OI
+    printf '%x' "$_m"
+}
+
+tsp_cpu_optimize() {
+    TSP_CPU_MAIN_MASK=""
+    TSP_CPU_BG_MASK=""
+    TSP_CPU_POLICY=auto
+
+    if [ -r "$GAMEDIR/tsp_cpu_policy.txt" ]; then
+        read -r TSP_CPU_POLICY < "$GAMEDIR/tsp_cpu_policy.txt" 2>/dev/null
+    fi
+    case "$TSP_CPU_POLICY" in auto|off) ;; *) TSP_CPU_POLICY=auto ;; esac
+    if [ "$TSP_CPU_POLICY" = "off" ]; then
+        echo "CPU policy:   off"
+        return 0
+    fi
+    command -v taskset >/dev/null 2>&1 || { echo "CPU policy:   no taskset - skipping"; return 0; }
+
+    # Enumerate online CPUs and find the fastest.
+    TSP_CPU_ALL=""; TSP_CPU_FAST=""; TSP_CPU_BEST=0
+    for d in /sys/devices/system/cpu/cpu[0-9]*; do
+        n=${d##*/cpu}
+        case "$n" in ''|*[!0-9]*) continue ;; esac
+        on=1; [ -r "$d/online" ] && read -r on < "$d/online"
+        [ "$on" = "1" ] || continue
+        TSP_CPU_ALL="${TSP_CPU_ALL}${TSP_CPU_ALL:+,}$n"
+        khz=0; [ -r "$d/cpufreq/cpuinfo_max_freq" ] && read -r khz < "$d/cpufreq/cpuinfo_max_freq"
+        case "$khz" in ''|*[!0-9]*) khz=0 ;; esac
+        if [ "$khz" -gt "$TSP_CPU_BEST" ]; then
+            TSP_CPU_BEST=$khz; TSP_CPU_FAST=$n
+        elif [ "$khz" -eq "$TSP_CPU_BEST" ]; then
+            TSP_CPU_FAST="${TSP_CPU_FAST}${TSP_CPU_FAST:+,}$n"
+        fi
+    done
+    [ -n "$TSP_CPU_ALL" ] || { echo "CPU policy:   no online CPUs - skipping"; return 0; }
+
+    # One core for the main thread: the first of the fastest tier.
+    TSP_CPU_MAIN=${TSP_CPU_FAST%%,*}
+
+    # Everything else for background work. If that would be empty (single
+    # core machine) fall back to giving background threads everything.
+    TSP_CPU_BG=""
+    _OI=$IFS; IFS=,
+    for n in $TSP_CPU_ALL; do
+        [ "$n" = "$TSP_CPU_MAIN" ] && continue
+        TSP_CPU_BG="${TSP_CPU_BG}${TSP_CPU_BG:+,}$n"
+    done
+    IFS=$_OI
+    [ -n "$TSP_CPU_BG" ] || TSP_CPU_BG="$TSP_CPU_ALL"
+
+    TSP_CPU_ALL_MASK=$(tsp_cpu_mask "$TSP_CPU_ALL")
+    TSP_CPU_MAIN_MASK=$(tsp_cpu_mask "$TSP_CPU_MAIN")
+    TSP_CPU_BG_MASK=$(tsp_cpu_mask "$TSP_CPU_BG")
+
+    # PROBE. BusyBox taskset wants a hex mask; util-linux accepts one too.
+    # If this fails for any reason we print why and change nothing.
+    if ! taskset "$TSP_CPU_ALL_MASK" true 2>/dev/null; then
+        echo "CPU policy:   taskset rejected mask $TSP_CPU_ALL_MASK - leaving affinity alone"
+        taskset "$TSP_CPU_ALL_MASK" true 2>&1 | head -1
+        TSP_CPU_MAIN_MASK=""; TSP_CPU_BG_MASK=""
+        return 0
+    fi
+
+    echo "CPU policy:   auto"
+    echo "  online     : $TSP_CPU_ALL  (mask $TSP_CPU_ALL_MASK)"
+    echo "  fastest    : $TSP_CPU_FAST @ ${TSP_CPU_BEST} kHz"
+    echo "  main thread: cpu$TSP_CPU_MAIN  (mask $TSP_CPU_MAIN_MASK)"
+    echo "  background : $TSP_CPU_BG  (mask $TSP_CPU_BG_MASK)"
+}
+
+# Governor control. cpu4-7 sit on "ondemand" with a 2.16 GHz ceiling they
+# rarely reach - cpu4 was measured at 1.2 GHz mid-stall. Pinning the main
+# thread to a core the governor keeps at half clock wastes the point, so the
+# fastest tier is switched to "performance" while the game runs and put back
+# exactly as it was on exit. Originals are saved per-cpu, so this restores
+# correctly whatever profile the firmware had set.
+TSP_GOV_SAVE="/tmp/tsp-governors.saved"
+
+tsp_cpu_governor_boost() {
+    [ "$TSP_CPU_POLICY" = "off" ] && return 0
+    [ -n "$TSP_CPU_FAST" ] || return 0
+    : > "$TSP_GOV_SAVE" 2>/dev/null || return 0
+    _changed=""
+    _OI=$IFS; IFS=,
+    for n in $TSP_CPU_FAST; do
+        g="/sys/devices/system/cpu/cpu$n/cpufreq/scaling_governor"
+        [ -r "$g" ] || continue
+        read -r _old < "$g"
+        [ "$_old" = "performance" ] && continue
+        if [ -w "$g" ] && echo performance > "$g" 2>/dev/null; then
+            echo "$n $_old" >> "$TSP_GOV_SAVE"
+            _changed="${_changed}${_changed:+,}cpu$n:$_old->performance"
+        fi
+    done
+    IFS=$_OI
+    if [ -n "$_changed" ]; then
+        echo "  governor   : $_changed"
+    else
+        echo "  governor   : unchanged (already performance, or not writable)"
+    fi
+}
+
+tsp_cpu_governor_restore() {
+    [ -r "$TSP_GOV_SAVE" ] || return 0
+    while read -r n old; do
+        [ -n "$n" ] || continue
+        g="/sys/devices/system/cpu/cpu$n/cpufreq/scaling_governor"
+        [ -w "$g" ] && echo "$old" > "$g" 2>/dev/null
+    done < "$TSP_GOV_SAVE"
+    rm -f "$TSP_GOV_SAVE"
+    echo "CPU policy:   governors restored"
+}
+
+# Applied after launch: workers inherit whoever spawned them, so this has to
+# run once they exist. Three passes covers OpenMW's and the GL driver's
+# thread creation without polling forever.
+# =================== TSP_LEVER_V1 ===========================================
+# Three levers that share one off-switch file, $GAMEDIR/tsp_lever_policy.txt:
+#   orphan=off    do not export LIBGL_TSP_ORPHAN=1 (gl4es TSP_VBO_ORPHAN_V1 stays dormant)
+#   gpuclock=off  leave the GPU clock / power policy alone
+#   hygiene=off   leave the TrimUI daemons alone
+# No file = all three on. Everything applied here is saved and put back on exit.
+# Proof lines: TSP_VBO_ORPHAN_V1 / TSP_GPUCLOCK_V1 / TSP_HYGIENE_V1 in the log,
+# one TSP_LEVER_V1 line per launch in /mnt/SDCARD/tsp_prog.txt.
+TSP_HYG_SAVE="/tmp/tsp-hygiene.saved"
+TSP_GPU_SAVE="/tmp/tsp-gpuclock.saved"
+# TSP_NATIVE_POWER_V1 -- muOS and Knulli own their power-button, volume/hotkey,
+# display blanking and GPU suspend/resume policy. Do not apply the Stock/CrossMix
+# daemon-affinity or GPU-power workarounds there. Keep the muOS governor watchdog
+# separate: it fixes the known "returns from idle but stays slow" behavior.
+tsp_native_power_os() {
+    [ -d /opt/muos ] && return 0
+
+    _tsp_np_cfw=$(printf '%s' "${CFW_NAME:-}" | tr '[:upper:]' '[:lower:]')
+    case "$_tsp_np_cfw" in
+        *knulli*) return 0 ;;
+    esac
+
+    grep -qi 'knulli' /etc/os-release /usr/share/batocera/batocera.version 2>/dev/null
+}
+
+tsp_lever_policy() {
+    if [ -r "$GAMEDIR/tsp_lever_policy.txt" ] && grep -q "^$1=off" "$GAMEDIR/tsp_lever_policy.txt" 2>/dev/null; then echo off; else echo on; fi
+}
+tsp_proc_nice() {
+    _pp=$1; _s=$(cat /proc/$_pp/stat 2>/dev/null) || return 1
+    _r=${_s##*) }; set -- $_r; echo "${17}"
+}
+tsp_proc_cpus() { grep Cpus_allowed_list /proc/$1/status 2>/dev/null | cut -f2; }
+
+# TSP_HYGIENE_V1: the launcher UI and its daemons (trimui_osdd alone had 6151 CPU-s of
+# uptime on the S) run at nice 0 on every core, including the one the game's main
+# thread is pinned to. Pin them to the background mask, drop their priority, keep
+# input responsive (trimui_inputd: pinned, not reniced) and give the FUSE exfat
+# daemon that serves every asset read a small edge (-5) off the main core.
+tsp_hygiene_apply() {
+    if tsp_native_power_os; then
+        rm -f "$TSP_HYG_SAVE" 2>/dev/null || true
+        echo "TSP_NATIVE_POWER_V1 hygiene skipped on muOS/Knulli; OS keeps MainUI/keymon/hardwareservice/input daemon scheduling"
+        return 0
+    fi
+    if [ "$(tsp_lever_policy hygiene)" = off ]; then echo "TSP_HYGIENE_V1 off (policy)"; return 0; fi
+    if [ -z "${TSP_CPU_BG_MASK:-}" ]; then echo "TSP_HYGIENE_V1 skipped (no background mask - CPU policy off or taskset rejected)"; return 0; fi
+    command -v renice >/dev/null 2>&1 || { echo "TSP_HYGIENE_V1 skipped (no renice)"; return 0; }
+    : > "$TSP_HYG_SAVE"
+    _n=0
+    for _spec in MainUI:10 keymon:10 trimui_scened:10 trimui_osdd:10 musicserver:10 hardwareservice:10 ledc:10 trimui_inputd:0 mount.exfat:-5; do
+        _name=${_spec%%:*}; _adj=${_spec##*:}
+        for _p in $(pidof "$_name" 2>/dev/null); do
+            _on=$(tsp_proc_nice "$_p") || continue
+            _om=$(taskset -p "$_p" 2>/dev/null | sed 's/.*: *//')
+            [ -n "$_om" ] || continue
+            printf '%s\t%s\t%s\t%s\n' "$_p" "$_name" "$_on" "$_om" >> "$TSP_HYG_SAVE"
+            taskset -ap "$TSP_CPU_BG_MASK" "$_p" >/dev/null 2>&1 || true
+            [ "$_adj" != 0 ] && { renice "$_adj" -p "$_p" >/dev/null 2>&1 || true; }
+            _n=$((_n+1))
+        done
+    done
+    echo "TSP_HYGIENE_V1 on bg_mask=$TSP_CPU_BG_MASK main_mask=${TSP_CPU_MAIN_MASK:-?} touched=$_n"
+    while IFS="$(printf '\t')" read -r _p _name _on _om; do
+        [ -n "$_p" ] || continue
+        echo "  $_name pid=$_p nice=$(tsp_proc_nice "$_p") cpus=$(tsp_proc_cpus "$_p")  (was nice=$_on mask=$_om)"
+    done < "$TSP_HYG_SAVE"
+}
+tsp_hygiene_restore() {
+    [ -r "$TSP_HYG_SAVE" ] || return 0
+    _n=0
+    while IFS="$(printf '\t')" read -r _p _name _on _om; do
+        [ -n "$_p" ] || continue
+        [ "$(cat /proc/$_p/comm 2>/dev/null)" = "$_name" ] || continue
+        taskset -ap "$_om" "$_p" >/dev/null 2>&1 || true
+        renice "$_on" -p "$_p" >/dev/null 2>&1 || true
+        _n=$((_n+1))
+    done < "$TSP_HYG_SAVE"
+    rm -f "$TSP_HYG_SAVE"
+    echo "TSP_HYGIENE_V1 restored $_n daemon(s)"
+}
+
+# TSP_GPUCLOCK_V1: the S's Mali sits at 150 MHz of an 888 MHz range under
+# simple_ondemand for its whole uptime; hold it at the top while the game runs
+# (min_freq=max_freq, performance governor when offered, kbase power_policy
+# always_on). The base TSP has no devfreq for the PowerVR; Allwinner's scenectrl
+# node is the only runtime knob there and is tried if present. Saved + restored.
+tsp_gpuclock_apply() {
+    if tsp_native_power_os; then
+        rm -f "$TSP_GPU_SAVE" 2>/dev/null || true
+        echo "TSP_NATIVE_POWER_V1 gpu power override skipped on muOS/Knulli; OS owns suspend/resume power policy"
+        return 0
+    fi
+    if [ "$(tsp_lever_policy gpuclock)" = off ]; then echo "TSP_GPUCLOCK_V1 off (policy)"; return 0; fi
+    rm -f "$TSP_GPU_SAVE"
+    _d=""; for _c in /sys/class/devfreq/*gpu*; do [ -e "$_c/cur_freq" ] && { _d=$_c; break; }; done
+    if [ -n "$_d" ]; then
+        _gov=$(cat $_d/governor 2>/dev/null); _min=$(cat $_d/min_freq 2>/dev/null); _max=$(cat $_d/max_freq 2>/dev/null)
+        printf 'devfreq\t%s\t%s\t%s\n' "$_d" "$_gov" "$_min" >> "$TSP_GPU_SAVE"
+        grep -qw performance $_d/available_governors 2>/dev/null && { echo performance > $_d/governor 2>/dev/null || true; }
+        echo "$_max" > $_d/min_freq 2>/dev/null || true
+        _pp=/sys/class/misc/mali0/device/power_policy
+        if [ -w "$_pp" ]; then
+            _old=$(sed 's/.*\[\(.*\)\].*/\1/' $_pp 2>/dev/null)
+            printf 'mali_pp\t%s\t%s\n' "$_pp" "$_old" >> "$TSP_GPU_SAVE"
+            echo always_on > $_pp 2>/dev/null || true
+        fi
+        sleep 1
+        echo "TSP_GPUCLOCK_V1 on node=$_d gov=$(cat $_d/governor 2>/dev/null) min=$(cat $_d/min_freq 2>/dev/null) cur=$(cat $_d/cur_freq 2>/dev/null) max=$_max power_policy=$(cat $_pp 2>/dev/null | tr -d '\n')  (was gov=$_gov min=$_min)"
+    elif [ -e /sys/devices/platform/gpu/scenectrl/command ]; then
+        _sc=/sys/devices/platform/gpu/scenectrl
+        _old=$(cat $_sc/command 2>/dev/null)
+        printf 'scenectrl\t%s\t%s\n' "$_sc/command" "$_old" >> "$TSP_GPU_SAVE"
+        echo 1 > $_sc/command 2>/dev/null || true
+        echo "TSP_GPUCLOCK_V1 on scenectrl command=$(cat $_sc/command 2>/dev/null) status=$(cat $_sc/status 2>/dev/null)  (was $_old) nodes=[$(ls $_sc 2>/dev/null | tr '\n' ' ')]"
+    else
+        echo "TSP_GPUCLOCK_V1 skipped (no devfreq gpu node and no scenectrl on this card)"
+    fi
+}
+tsp_gpuclock_restore() {
+    [ -r "$TSP_GPU_SAVE" ] || return 0
+    while IFS="$(printf '\t')" read -r _k _a _b _c; do
+        case "$_k" in
+            devfreq) [ -n "$_c" ] && { echo "$_c" > $_a/min_freq 2>/dev/null || true; }; [ -n "$_b" ] && { echo "$_b" > $_a/governor 2>/dev/null || true; } ;;
+            mali_pp|scenectrl) [ -n "$_b" ] && { echo "$_b" > "$_a" 2>/dev/null || true; } ;;
+        esac
+    done < "$TSP_GPU_SAVE"
+    rm -f "$TSP_GPU_SAVE"
+    echo "TSP_GPUCLOCK_V1 restored"
+}
+tsp_lever_prelaunch() {
+    echo "# TSP_LEVER_V1 ----------------------------------------------------"
+    if [ "$(tsp_lever_policy orphan)" = off ]; then
+        unset LIBGL_TSP_ORPHAN; echo "TSP_VBO_ORPHAN_V1 env off (policy)"
+    else
+        export LIBGL_TSP_ORPHAN=1
+        echo "TSP_VBO_ORPHAN_V1 env on LIBGL_TSP_ORPHAN=1 lib_marker=$(grep -a -c TSP_VBO_ORPHAN_V1 "$GAMEDIR/lib/libGL.so.1" 2>/dev/null)"
+    fi
+    tsp_gpuclock_apply
+    tsp_hygiene_apply
+    echo "TSP_LEVER_V1 armed $(date '+%Y-%m-%d %H:%M:%S') orphan=$(tsp_lever_policy orphan) gpuclock=$(tsp_lever_policy gpuclock) hygiene=$(tsp_lever_policy hygiene) bg_mask=${TSP_CPU_BG_MASK:-none}" >> "$TSP_PROG"
+}
+tsp_lever_restore() { tsp_hygiene_restore; tsp_gpuclock_restore; }
+# =================== end TSP_LEVER_V1 =======================================
+
+tsp_cpu_apply_split() {
+    _pid="$1"
+    [ -n "$TSP_CPU_MAIN_MASK" ] || return 0
+    for _delay in 8 25 60; do
+        sleep "$_delay"
+        kill -0 "$_pid" 2>/dev/null || return 0
+        taskset -ap "$TSP_CPU_BG_MASK" "$_pid" >/dev/null 2>&1
+        taskset -p  "$TSP_CPU_MAIN_MASK" "$_pid" >/dev/null 2>&1
+    done
+}
+
+# TSP_SWAP_V1
+# The 0-1 fps stalls on this port are page-cache thrash, confirmed by
+# measurement: 997 major faults in a 10-second window during a stall versus 0
+# while healthy, with CPU utilisation going DOWN because the process was
+# blocked in the fault path rather than computing.
+#
+# Cause: ~684 MB RSS plus a ~230 MB Mali pool on a 986 MB device with NO SWAP.
+# With no swap the kernel's only reclaimable memory is file-backed pages, so
+# it evicts the game's own executable and libraries and faults them straight
+# back off the SD card - which is a fuseblk (exFAT) mount, so every fault is a
+# round trip through a userspace filesystem daemon.
+#
+# Adding 512 MB of swap on the internal ext4 partition took the fault count
+# from 997 to 166 per 10 s and the same fast-travel spot from 0 fps to ~5.
+# swappiness is raised so the kernel prefers evicting anonymous pages (which
+# now have somewhere to go) over file pages (which are the expensive ones).
+#
+# THIS CREATES A PERSISTENT FILE ON THE USER'S INTERNAL STORAGE.
+# Default 512 MB at /mnt/UDISK/openmw-swapfile. Remove it with
+# tsp_swap_remove.sh. Size is overridable in $GAMEDIR/tsp_swap_mb.txt;
+# "0" or "off" disables the whole feature and the game runs exactly as before.
+tsp_setup_swap() {
+    TSP_SWAP_MB=512
+    TSP_SWAPPINESS=150
+    TSP_VFS_PRESSURE=50
+    TSP_SWAP_DIR="${TSP_STATE_DIR:-/mnt/UDISK}"
+    TSP_SWAP_FILE="$TSP_SWAP_DIR/openmw-swapfile"
+
+    if [ -r "$GAMEDIR/tsp_swap_mb.txt" ]; then
+        read -r TSP_SWAP_CFG < "$GAMEDIR/tsp_swap_mb.txt" 2>/dev/null
+        case "$TSP_SWAP_CFG" in
+            off|OFF|0) echo "Swap:         disabled by tsp_swap_mb.txt"; return 0 ;;
+            ''|*[!0-9]*) ;;
+            *) TSP_SWAP_MB=$TSP_SWAP_CFG ;;
+        esac
+    fi
+
+    [ -e /proc/swaps ] || { echo "Swap:         kernel has no swap support - skipping"; return 0; }
+
+    if grep -q "^$TSP_SWAP_FILE " /proc/swaps 2>/dev/null; then
+        echo "Swap:         already active ($TSP_SWAP_FILE)"
+        tsp_swap_tune
+        return 0
+    fi
+
+    command -v mkswap >/dev/null 2>&1 || { echo "Swap:         mkswap unavailable - skipping"; return 0; }
+    command -v swapon >/dev/null 2>&1 || { echo "Swap:         swapon unavailable - skipping"; return 0; }
+    [ -d "$TSP_SWAP_DIR" ] || { echo "Swap:         $TSP_SWAP_DIR not present - skipping"; return 0; }
+
+    # Refuse anything that cannot back a swapfile. FUSE and FAT cannot.
+    TSP_SWAP_FSTYPE=""
+    while read -r _dev _mp _fs _rest; do
+        [ "$_mp" = "$TSP_SWAP_DIR" ] && TSP_SWAP_FSTYPE=$_fs
+    done < /proc/mounts
+    case "$TSP_SWAP_FSTYPE" in
+        ext2|ext3|ext4|f2fs|btrfs|xfs) ;;
+        *) echo "Swap:         $TSP_SWAP_DIR is '$TSP_SWAP_FSTYPE', which cannot host a swapfile"; tsp_swap_loop; return 0 ;;
+    esac
+
+    if [ ! -f "$TSP_SWAP_FILE" ]; then
+        # Never fill the partition: require 2x the swap size free.
+        TSP_SWAP_FREE_KB=$(df -k "$TSP_SWAP_DIR" 2>/dev/null | tail -1 | tr -s ' ' | cut -d' ' -f4)
+        case "$TSP_SWAP_FREE_KB" in ''|*[!0-9]*) TSP_SWAP_FREE_KB=0 ;; esac
+        TSP_SWAP_NEED_KB=$(( TSP_SWAP_MB * 1024 * 2 ))
+        if [ "$TSP_SWAP_FREE_KB" -lt "$TSP_SWAP_NEED_KB" ]; then
+            echo "Swap:         only ${TSP_SWAP_FREE_KB} kB free on $TSP_SWAP_DIR, need ${TSP_SWAP_NEED_KB} kB - skipping"
+            return 0
+        fi
+
+        echo "Swap:         creating ${TSP_SWAP_MB} MB at $TSP_SWAP_FILE (one time, ~15s)"
+        if ! dd if=/dev/zero of="$TSP_SWAP_FILE" bs=1M count="$TSP_SWAP_MB" 2>/dev/null; then
+            echo "Swap:         could not write swapfile - skipping"
+            rm -f "$TSP_SWAP_FILE"
+            return 0
+        fi
+        chmod 600 "$TSP_SWAP_FILE" 2>/dev/null
+        if ! mkswap "$TSP_SWAP_FILE" >/dev/null 2>&1; then
+            echo "Swap:         mkswap failed - removing and skipping"
+            rm -f "$TSP_SWAP_FILE"
+            return 0
+        fi
+    fi
+
+    chmod 600 "$TSP_SWAP_FILE" 2>/dev/null
+    if swapon "$TSP_SWAP_FILE" 2>/dev/null; then
+        echo "Swap:         active, ${TSP_SWAP_MB} MB at $TSP_SWAP_FILE"
+        tsp_swap_tune
+    else
+        echo "Swap:         swapon failed - continuing without swap"
+    fi
+}
+
+# TSP_SWAP_LOOP_V1 -- swap where no mounted filesystem will take a swapfile.
+# Knulli mounts /userdata as fuseblk and /boot as vfat; the kernel refuses a
+# swapfile on both, and is right to refuse fuseblk -- serving swap through a
+# userspace daemon that itself needs memory deadlocks. A loop device sidesteps
+# it: the backing file is inert data on vfat and the swap path is block I/O in
+# the kernel the whole way down. No losetup on this image and no busybox applet
+# either, so the attach uses the LOOP_* ioctls via python3.
+# Swap is released at exit by tsp_swap_release. Leaving it armed meant every later
+# shutdown, reboot and freeze ran with a live swap device on a file this launcher
+# created -- a corruption vector on every power event.
+# Priority is in tsp_setup_swap: UDISK first, this only when that fs refuses.
+tsp_swap_loop() {
+    # TSP_SWAP_OFFBOOT_V1 -- the image must NEVER live on /boot. On every one
+    # of these systems that is the unjournalled boot volume holding the kernel,
+    # and an armed swap device on it makes each power event a chance to corrupt
+    # the OS. Inside the port, the worst case is replaceable game data.
+    TSP_SWAP_LOOP_IMG="${TSP_SWAP_LOOP_IMG:-$GAMEDIR/openmw-swap.img}"
+    case "$TSP_SWAP_LOOP_IMG" in
+        /boot/*) echo "Swap:         refusing to place a swap image on /boot"; return 0 ;;
+    esac
+    TSP_SWAP_LOOP_SEED="$GAMEDIR/defaults/openmw-swap.img"
+    if grep -q loop /proc/swaps 2>/dev/null; then
+        echo "Swap:         loop swap already active ($(awk '$1 ~ /loop/ {print $1; exit}' /proc/swaps))"
+        tsp_swap_tune
+        return 0
+    fi
+    if ! command -v python3 >/dev/null 2>&1; then
+        echo "Swap:         no losetup and no python3 - cannot attach a loop device"
+        return 0
+    fi
+    if [ ! -s "$TSP_SWAP_LOOP_IMG" ]; then
+        if [ -s "$TSP_SWAP_LOOP_SEED" ]; then
+            echo "Swap:         installing the shipped image from defaults/"
+            cp -f "$TSP_SWAP_LOOP_SEED" "$TSP_SWAP_LOOP_IMG" 2>/dev/null || {
+                echo "Swap:         could not copy the shipped image - skipping"
+                return 0
+            }
+        else
+            _sd=$(dirname "$TSP_SWAP_LOOP_IMG")
+            _sf=$(df -k "$_sd" 2>/dev/null | tail -1 | tr -s ' ' | cut -d' ' -f4)
+            case "$_sf" in ''|*[!0-9]*) _sf=0 ;; esac
+            if [ "$_sf" -lt $(( TSP_SWAP_MB * 1024 * 2 )) ]; then
+                echo "Swap:         only ${_sf} kB free on $_sd - skipping"
+                return 0
+            fi
+            echo "Swap:         creating ${TSP_SWAP_MB} MB at $TSP_SWAP_LOOP_IMG (one time, ~15s)"
+            if ! dd if=/dev/zero of="$TSP_SWAP_LOOP_IMG" bs=1M count="$TSP_SWAP_MB" 2>/dev/null; then
+                rm -f "$TSP_SWAP_LOOP_IMG"
+                echo "Swap:         could not write the image - skipping"
+                return 0
+            fi
+            sync
+        fi
+    fi
+    TSP_SWAP_LOOP_DEV=$(python3 -c "import fcntl,os,sys;c=os.open('/dev/loop-control',os.O_RDWR);n=fcntl.ioctl(c,0x4C82);os.close(c);d='/dev/loop%d'%n;l=os.open(d,os.O_RDWR);b=os.open(sys.argv[1],os.O_RDWR);fcntl.ioctl(l,0x4C00,b);print(d)" "$TSP_SWAP_LOOP_IMG" 2>/dev/null)
+    if [ -z "$TSP_SWAP_LOOP_DEV" ] || [ ! -e "$TSP_SWAP_LOOP_DEV" ]; then
+        echo "Swap:         loop attach failed - continuing without swap"
+        return 0
+    fi
+    if python3 -c "import fcntl,os,sys;fcntl.ioctl(os.open(sys.argv[1],os.O_RDWR),0x4C08,1)" "$TSP_SWAP_LOOP_DEV" 2>/dev/null; then
+        echo "Swap:         $TSP_SWAP_LOOP_DEV direct-io on"
+    else
+        echo "Swap:         $TSP_SWAP_LOOP_DEV direct-io unavailable (double-caching, still usable)"
+    fi
+    if ! mkswap "$TSP_SWAP_LOOP_DEV" >/dev/null 2>&1; then
+        echo "Swap:         mkswap failed on $TSP_SWAP_LOOP_DEV - skipping"
+        return 0
+    fi
+    if swapon -p 10 "$TSP_SWAP_LOOP_DEV" 2>/dev/null; then
+        echo "Swap:         active, ${TSP_SWAP_MB} MB on $TSP_SWAP_LOOP_DEV via $TSP_SWAP_LOOP_IMG"
+        tsp_swap_tune
+    else
+        echo "Swap:         swapon failed on $TSP_SWAP_LOOP_DEV - continuing without swap"
+    fi
+    return 0
+}
+
+# TSP_SWAP_RELEASE_V1 -- never leave swap armed once the launcher is done.
+tsp_swap_release() {
+    [ -n "${TSP_SWAP_LOOP_DEV:-}" ] || return 0
+    if ! grep -q "$TSP_SWAP_LOOP_DEV" /proc/swaps 2>/dev/null; then
+        TSP_SWAP_LOOP_DEV=""
+        return 0
+    fi
+    echo "Swap:         releasing $TSP_SWAP_LOOP_DEV"
+    if ! swapoff "$TSP_SWAP_LOOP_DEV" 2>/dev/null; then
+        echo "Swap:         swapoff failed - left armed"
+        return 0
+    fi
+    python3 -c "import fcntl,os,sys;fcntl.ioctl(os.open(sys.argv[1],os.O_RDWR),0x4C01)" "$TSP_SWAP_LOOP_DEV" 2>/dev/null \
+        && echo "Swap:         $TSP_SWAP_LOOP_DEV detached"
+    sync
+    TSP_SWAP_LOOP_DEV=""
+    return 0
+}
+
+tsp_swap_tune() {
+    # TSP_SWAPPINESS_CLAMP_V1 -- the 0-200 swappiness range arrived in Linux 5.8.
+    # These kernels cap at 100 and reject 150 with EINVAL. The old guard only
+    # tested that the file was WRITABLE, so the rejected write was swallowed and
+    # the OS default stayed -- muOS ships 8, which means the kernel will evict the
+    # game's page cache rather than touch the 512 MB of swap we just mounted.
+    # Step down until one is accepted, and say which one landed.
+    for _sw in "$TSP_SWAPPINESS" 100 60; do
+        if echo "$_sw" > /proc/sys/vm/swappiness 2>/dev/null; then break; fi
+    done
+    [ -w /proc/sys/vm/vfs_cache_pressure ] && echo "$TSP_VFS_PRESSURE" > /proc/sys/vm/vfs_cache_pressure 2>/dev/null
+    echo "  swappiness : $(cat /proc/sys/vm/swappiness 2>/dev/null) (prefer swapping heap over evicting code)"
+    echo "  vfs_cache  : $(cat /proc/sys/vm/vfs_cache_pressure 2>/dev/null)"
+}
+
+
+# >>> TSP_OS_ZRAM_V2 BEGIN
+# muOS / Knulli: use each OS's NATIVE ZRAM mechanism.
+#
+# Ownership rule:
+#   * ZRAM already active when Morrowind starts -> OS/user-owned, leave it alone.
+#   * muOS setting already nonzero but ZRAM is not mounted -> ask muOS's own
+#     swap.sh to apply the user's setting, then leave it enabled on exit.
+#   * muOS setting is 0 -> temporarily set it to TSP_ZRAM_TEMP_MB, run the
+#     native swap.sh, and restore the original setting + native state on exit.
+#   * Knulli -> use its native zramswap service only. No direct /sys zram setup.
+#
+# IMPORTANT: This block deliberately does NOT modprobe/reset/zramctl/mkswap/
+# swapon a zram device itself on muOS. The exact device-specific procedure
+# belongs to /opt/muos/script/system/swap.sh.
+TSP_ZRAM_OWNED=0
+TSP_ZRAM_DEV=""
+TSP_ZRAM_MODE=""
+TSP_ZRAM_OS=""
+TSP_ZRAM_TEMP_MB="${TSP_ZRAM_MB:-512}"
+
+TSP_MUOS_ZRAM_CFG="/opt/muos/config/settings/advanced/zramfile"
+TSP_MUOS_SWAP_SCRIPT="/opt/muos/script/system/swap.sh"
+TSP_MUOS_ZRAM_OLD=""
+TSP_MUOS_ZRAM_MARKER="$GAMEDIR/.tsp-muos-zram-owned"
+
+tsp_zram_platform() {
+    TSP_ZRAM_OS=""
+
+    if [ -d /opt/muos ]; then
+        TSP_ZRAM_OS="muOS"
+        return 0
+    fi
+
+    _tsp_cfw=$(printf '%s' "${CFW_NAME:-}" | tr '[:upper:]' '[:lower:]')
+    case "$_tsp_cfw" in
+        *knulli*)
+            TSP_ZRAM_OS="Knulli"
+            return 0
+            ;;
+    esac
+
+    if grep -qi 'knulli' /etc/os-release /usr/share/batocera/batocera.version 2>/dev/null; then
+        TSP_ZRAM_OS="Knulli"
+        return 0
+    fi
+
+    return 1
+}
+
+tsp_zram_active_dev() {
+    awk 'NR > 1 && $1 ~ /^\/dev\/zram[0-9]+$/ { print $1; exit }' /proc/swaps 2>/dev/null
+}
+
+tsp_zram_valid_mb() {
+    case "$1" in
+        ''|*[!0-9]*) return 1 ;;
+        0) return 1 ;;
+    esac
+    [ "$1" -ge 64 ] 2>/dev/null && [ "$1" -le 2048 ] 2>/dev/null
+}
+
+tsp_muos_zram_apply_native() {
+    [ -x "$TSP_MUOS_SWAP_SCRIPT" ] || {
+        echo "ZRAM:         muOS native swap script missing: $TSP_MUOS_SWAP_SCRIPT"
+        return 1
+    }
+
+    "$TSP_MUOS_SWAP_SCRIPT"
+}
+
+tsp_muos_zram_clear_marker() {
+    rm -f "$TSP_MUOS_ZRAM_MARKER" 2>/dev/null || true
+}
+
+tsp_muos_zram_write_marker() {
+    {
+        echo "original=$TSP_MUOS_ZRAM_OLD"
+        echo "temporary=$TSP_ZRAM_TEMP_MB"
+    } > "$TSP_MUOS_ZRAM_MARKER" || return 1
+    sync
+    return 0
+}
+
+tsp_muos_zram_recover_stale() {
+    [ -r "$TSP_MUOS_ZRAM_MARKER" ] || return 0
+    [ -r "$TSP_MUOS_ZRAM_CFG" ] && [ -w "$TSP_MUOS_ZRAM_CFG" ] || {
+        echo "ZRAM:         stale ownership marker exists but muOS config is unavailable; leaving marker for recovery"
+        return 1
+    }
+
+    _tsp_mark_orig=""
+    _tsp_mark_temp=""
+    while IFS='=' read -r _tsp_k _tsp_v; do
+        case "$_tsp_k" in
+            original)  _tsp_mark_orig=$_tsp_v ;;
+            temporary) _tsp_mark_temp=$_tsp_v ;;
+        esac
+    done < "$TSP_MUOS_ZRAM_MARKER"
+
+    case "$_tsp_mark_orig" in ''|*[!0-9]*) _tsp_mark_orig="" ;; esac
+    case "$_tsp_mark_temp" in ''|*[!0-9]*) _tsp_mark_temp="" ;; esac
+
+    if [ -z "$_tsp_mark_orig" ] || [ -z "$_tsp_mark_temp" ]; then
+        echo "ZRAM:         stale ownership marker is invalid; removing it without changing muOS settings"
+        tsp_muos_zram_clear_marker
+        return 0
+    fi
+
+    _tsp_cfg_now=""
+    read -r _tsp_cfg_now < "$TSP_MUOS_ZRAM_CFG" 2>/dev/null || _tsp_cfg_now=""
+
+    # Only undo the setting if it still equals the exact temporary value written
+    # by this launcher. If the user changed it in the UI, their newer choice wins.
+    if [ "$_tsp_cfg_now" != "$_tsp_mark_temp" ]; then
+        echo "ZRAM:         stale marker found, but muOS setting changed from launcher value $_tsp_mark_temp to [$_tsp_cfg_now]; preserving user setting"
+        tsp_muos_zram_clear_marker
+        return 0
+    fi
+
+    echo "ZRAM:         recovering temporary ZRAM state left by an interrupted/power-cycled prior run"
+    printf '%s\n' "$_tsp_mark_orig" > "$TSP_MUOS_ZRAM_CFG" || return 1
+
+    if tsp_muos_zram_apply_native; then
+        echo "ZRAM:         stale launcher-owned setting restored to $_tsp_mark_orig"
+        tsp_muos_zram_clear_marker
+        return 0
+    fi
+
+    echo "ZRAM:         WARNING: native muOS swap.sh failed during stale-state recovery; marker retained"
+    return 1
+}
+
+tsp_muos_zram_start() {
+    # Recover a previous launcher-owned temporary setting BEFORE deciding that
+    # an already-active zram device belongs to the user/OS.
+    tsp_muos_zram_recover_stale || true
+    _tsp_existing=$(tsp_zram_active_dev)
+    if [ -n "$_tsp_existing" ]; then
+        TSP_ZRAM_DEV="$_tsp_existing"
+        TSP_ZRAM_MODE="existing"
+        TSP_ZRAM_OWNED=0
+        echo "ZRAM:         already active on muOS ($TSP_ZRAM_DEV); user/OS owns it, leaving it enabled on exit"
+        return 0
+    fi
+
+    [ -r "$TSP_MUOS_ZRAM_CFG" ] && [ -w "$TSP_MUOS_ZRAM_CFG" ] || {
+        echo "ZRAM:         muOS ZRAM setting is unavailable: $TSP_MUOS_ZRAM_CFG"
+        return 1
+    }
+
+    read -r TSP_MUOS_ZRAM_OLD < "$TSP_MUOS_ZRAM_CFG" 2>/dev/null || TSP_MUOS_ZRAM_OLD=0
+    case "$TSP_MUOS_ZRAM_OLD" in
+        ''|*[!0-9]*)
+            echo "ZRAM:         invalid muOS ZRAM setting [$TSP_MUOS_ZRAM_OLD]; refusing to change it"
+            return 1
+            ;;
+    esac
+
+    # The user has already enabled muOS ZRAM in Advanced Settings, but for
+    # whatever reason it is not mounted right now. Apply their setting through
+    # muOS's own script and treat the resulting ZRAM as user-owned.
+    if [ "$TSP_MUOS_ZRAM_OLD" -gt 0 ]; then
+        echo "ZRAM:         muOS setting already requests ${TSP_MUOS_ZRAM_OLD} MB; applying native swap.sh"
+        if ! tsp_muos_zram_apply_native; then
+            echo "ZRAM:         muOS native swap.sh failed while applying the user's setting"
+            return 1
+        fi
+
+        _tsp_existing=$(tsp_zram_active_dev)
+        if [ -z "$_tsp_existing" ]; then
+            echo "ZRAM:         muOS native swap.sh returned but no /dev/zram swap became active"
+            return 1
+        fi
+
+        TSP_ZRAM_DEV="$_tsp_existing"
+        TSP_ZRAM_MODE="muos-user-setting"
+        TSP_ZRAM_OWNED=0
+        echo "ZRAM:         muOS native ZRAM active from user setting: $TSP_ZRAM_DEV (${TSP_MUOS_ZRAM_OLD} MB); leaving enabled on exit"
+        return 0
+    fi
+
+    # User setting is OFF. Temporarily borrow the native muOS setting, run the
+    # exact same script muOS uses, and remember ownership so we can put it back.
+    if ! tsp_zram_valid_mb "$TSP_ZRAM_TEMP_MB"; then
+        echo "ZRAM:         invalid temporary size [$TSP_ZRAM_TEMP_MB] MB; using 512 MB"
+        TSP_ZRAM_TEMP_MB=512
+    fi
+
+    if ! tsp_muos_zram_write_marker; then
+        echo "ZRAM:         could not create ownership marker; refusing temporary muOS setting"
+        return 1
+    fi
+
+    printf '%s\n' "$TSP_ZRAM_TEMP_MB" > "$TSP_MUOS_ZRAM_CFG" || {
+        echo "ZRAM:         could not write temporary muOS ZRAM setting"
+        tsp_muos_zram_clear_marker
+        return 1
+    }
+
+    echo "ZRAM:         temporarily enabling ${TSP_ZRAM_TEMP_MB} MB through muOS native swap.sh"
+
+    if ! tsp_muos_zram_apply_native; then
+        echo "ZRAM:         muOS native swap.sh failed; restoring setting [$TSP_MUOS_ZRAM_OLD]"
+        printf '%s\n' "$TSP_MUOS_ZRAM_OLD" > "$TSP_MUOS_ZRAM_CFG" 2>/dev/null || true
+        if tsp_muos_zram_apply_native >/dev/null 2>&1; then
+            tsp_muos_zram_clear_marker
+        fi
+        return 1
+    fi
+
+    _tsp_existing=$(tsp_zram_active_dev)
+    if [ -z "$_tsp_existing" ]; then
+        echo "ZRAM:         native muOS script completed but no ZRAM swap is active; restoring original setting"
+        printf '%s\n' "$TSP_MUOS_ZRAM_OLD" > "$TSP_MUOS_ZRAM_CFG" 2>/dev/null || true
+        if tsp_muos_zram_apply_native >/dev/null 2>&1; then
+            tsp_muos_zram_clear_marker
+        fi
+        return 1
+    fi
+
+    TSP_ZRAM_DEV="$_tsp_existing"
+    TSP_ZRAM_MODE="muos-native-temporary"
+    TSP_ZRAM_OWNED=1
+
+    _tsp_size=$(zramctl "$TSP_ZRAM_DEV" 2>/dev/null | tail -1 | tr -s ' ' || true)
+    echo "ZRAM:         temporary muOS native ZRAM active: $TSP_ZRAM_DEV"
+    [ -n "$_tsp_size" ] && echo "ZRAM:         zramctl: $_tsp_size"
+    echo "ZRAM:         original muOS setting [$TSP_MUOS_ZRAM_OLD] will be restored on game exit"
+    return 0
+}
+
+tsp_knulli_zram_start() {
+    _tsp_existing=$(tsp_zram_active_dev)
+    if [ -n "$_tsp_existing" ]; then
+        TSP_ZRAM_DEV="$_tsp_existing"
+        TSP_ZRAM_MODE="existing"
+        TSP_ZRAM_OWNED=0
+        echo "ZRAM:         already active on Knulli ($TSP_ZRAM_DEV); user/OS owns it, leaving it enabled on exit"
+        return 0
+    fi
+
+    if [ -x /usr/share/batocera/services/zramswap ]; then
+        /usr/share/batocera/services/zramswap start >/dev/null 2>&1 || true
+        sleep 1
+        _tsp_existing=$(tsp_zram_active_dev)
+
+        if [ -n "$_tsp_existing" ]; then
+            TSP_ZRAM_DEV="$_tsp_existing"
+            TSP_ZRAM_MODE="knulli-service"
+            TSP_ZRAM_OWNED=1
+            echo "ZRAM:         temporary Knulli ZRAM enabled through native zramswap service ($TSP_ZRAM_DEV); will disable on exit"
+            return 0
+        fi
+
+        echo "ZRAM:         Knulli native zramswap service did not activate a ZRAM swap"
+        return 1
+    fi
+
+    echo "ZRAM:         Knulli native zramswap service not found; refusing direct low-level ZRAM setup"
+    return 1
+}
+
+tsp_zram_start() {
+    tsp_zram_platform || return 1
+
+    case "$TSP_ZRAM_OS" in
+        muOS)   tsp_muos_zram_start ;;
+        Knulli) tsp_knulli_zram_start ;;
+        *)      return 1 ;;
+    esac
+}
+
+tsp_zram_release() {
+    [ "${TSP_ZRAM_OWNED:-0}" = "1" ] || return 0
+
+    case "$TSP_ZRAM_MODE" in
+        muos-native-temporary)
+            echo "ZRAM:         restoring muOS ZRAM setting [$TSP_MUOS_ZRAM_OLD]"
+            if printf '%s\n' "$TSP_MUOS_ZRAM_OLD" > "$TSP_MUOS_ZRAM_CFG" 2>/dev/null; then
+                if tsp_muos_zram_apply_native; then
+                    if grep -q '^/dev/zram[0-9][0-9]* ' /proc/swaps 2>/dev/null; then
+                        echo "ZRAM:         WARNING: muOS native script returned but ZRAM is still active"
+                    else
+                        echo "ZRAM:         launcher-owned muOS ZRAM disabled; original setting restored"
+                        tsp_muos_zram_clear_marker
+                    fi
+                else
+                    echo "ZRAM:         WARNING: muOS native swap.sh failed while restoring original setting"
+                fi
+            else
+                echo "ZRAM:         WARNING: could not restore muOS ZRAM config file"
+            fi
+            ;;
+
+        knulli-service)
+            echo "ZRAM:         stopping launcher-owned Knulli native zramswap service"
+            if [ -x /usr/share/batocera/services/zramswap ]; then
+                /usr/share/batocera/services/zramswap stop >/dev/null 2>&1 || true
+            fi
+            ;;
+
+        *)
+            echo "ZRAM:         WARNING: launcher-owned ZRAM has unknown mode [$TSP_ZRAM_MODE]; leaving it unchanged"
+            ;;
+    esac
+
+    TSP_ZRAM_OWNED=0
+    TSP_ZRAM_DEV=""
+    TSP_ZRAM_MODE=""
+}
+
+tsp_memory_setup() {
+    if tsp_zram_platform; then
+        # Never use the old file/loop-backed OpenMW swap on muOS/Knulli.
+        if ! tsp_zram_start; then
+            echo "ZRAM:         native $TSP_ZRAM_OS setup unavailable; continuing without launcher-managed swap"
+        fi
+        return 0
+    fi
+
+    # Other platforms retain their existing memory setup unchanged.
+    tsp_setup_swap
+}
+# <<< TSP_OS_ZRAM_V2 END
+
+# <<< TSP_V36_PERF_TELEMETRY END
+export LIBGL_TSP_NORGBFIX=1
+export LIBGL_TSP_NODEPTHFIX=1
+
+unset LIBGL_TSP_WATCH
+unset LIBGL_TSP_WATCH_FBONLY
+unset LIBGL_TSP_FBFLUSH
+unset LIBGL_TSP_DT
+export LIBGL_TSP_LATEDETECT=1
+export LIBGL_NOTEXMAT=0
+export LIBGL_TSP_DEPTH=24
+unset LIBGL_TSP_DIAG_OUT
+unset LIBGL_TSP_SHADERDUMP
+export OPENMW_TSP_INCREMENTAL_COMPILE=1
+export LIBGL_TSP_NOPRELOAD=1
+unset LIBGL_TSP_DIAG
+unset LIBGL_TSP_DIAG_MEMSECS
+unset LIBGL_TSP_DIAG_MEMEVENT_KB
+export LIBGL_TSP_SHADERCACHE="$GAMEDIR/shadercache"
+unset LIBGL_TSP_DIAG_MAX
+export LIBGL_TSP_DERIVATIVES=1
+export LIBGL_FBCONVERT=1
+
+# >>> TSP_PORTABLE_ZRAM_BACKEND_V1 LOAD BEGIN
+# muOS/Knulli memory handling lives in one root-level backend file so this
+# launcher does not need OS-specific zram/module logic patched into it again.
+TSP_PORTABLE_ZRAM_BACKEND="$GAMEDIR/tsp_zram_portable.sh"
+
+if [ -r "$TSP_PORTABLE_ZRAM_BACKEND" ]; then
+    . "$TSP_PORTABLE_ZRAM_BACKEND"
+    echo "PORTABLE ZRAM: sourced $TSP_PORTABLE_ZRAM_BACKEND"
+else
+    echo "PORTABLE ZRAM: ERROR backend missing: $TSP_PORTABLE_ZRAM_BACKEND"
+
+    # Fail closed on muOS/Knulli. Do NOT silently fall back to either the old
+    # file/loop swap path or the launcher's old unpatched native-zram path.
+    if tsp_zram_platform 2>/dev/null; then
+        tsp_memory_setup() {
+            echo "PORTABLE ZRAM: no backend on $TSP_ZRAM_OS; continuing without launcher swap"
+            return 0
+        }
+    fi
+fi
+# <<< TSP_PORTABLE_ZRAM_BACKEND_V1 LOAD END
+
+    tsp_memory_setup
+# >>> TSP_DRAWTHREAD_V1 CORE BEGIN
+# With DrawThreadPerContext the OSG draw thread is as hot as the main thread and needs a fast core of its
+# own. On the S CrossMix leaves cpu5-7 offline, so only cpu4 of the 2.16 GHz tier exists to the scheduler:
+# bring the next core of that tier online for the run (put back on exit) BEFORE TSP_CPU_OPTIMIZE_V2
+# enumerates, so its masks include it. A 4-core card already has a second core in the tier.
+TSP_SYS_CPU="${TSP_SYS_CPU:-/sys/devices/system/cpu}"
+TSP_DRAW_CPU=""; TSP_DRAW_ONLINED=""; TSP_MAIN_GUESS=""
+if [ "$OSG_THREADING" = DrawThreadPerContext ] && ! grep -qs '^core=off' "$GAMEDIR/tsp_drawthread_policy.txt"; then
+    _best=0; _tier=""
+    for _d in "$TSP_SYS_CPU"/cpu[0-9]*; do
+        _n=${_d##*/cpu}; case "$_n" in ''|*[!0-9]*) continue ;; esac
+        _k=0; [ -r "$_d/cpufreq/cpuinfo_max_freq" ] && read -r _k < "$_d/cpufreq/cpuinfo_max_freq"
+        case "$_k" in ''|*[!0-9]*) _k=0 ;; esac
+        if [ "$_k" -gt "$_best" ]; then _best=$_k; _tier=$_n
+        elif [ "$_k" -eq "$_best" ]; then _tier="$_tier $_n"; fi
+    done
+    # main = first ONLINE core of the tier (what TSP_CPU_OPTIMIZE_V2 picks); draw = the next one, online or brought online
+    for _n in $_tier; do
+        _on=1; [ -r "$TSP_SYS_CPU/cpu$_n/online" ] && read -r _on < "$TSP_SYS_CPU/cpu$_n/online"
+        if [ -z "$TSP_MAIN_GUESS" ]; then [ "$_on" = 1 ] && TSP_MAIN_GUESS=$_n; continue; fi
+        if [ "$_on" = 1 ]; then TSP_DRAW_CPU=$_n; break; fi
+        if [ -w "$TSP_SYS_CPU/cpu$_n/online" ] && echo 1 > "$TSP_SYS_CPU/cpu$_n/online" 2>/dev/null; then
+            sleep 1; read -r _on < "$TSP_SYS_CPU/cpu$_n/online"
+            [ "$_on" = 1 ] && { TSP_DRAW_CPU=$_n; TSP_DRAW_ONLINED=$_n; break; }
+        fi
+    done
+    # fallback: an offline sibling has no cpufreq node on some kernels - try main+1, keep it only if it is as fast
+    if [ -z "$TSP_DRAW_CPU" ] && [ -n "$TSP_MAIN_GUESS" ]; then
+        _n=$((TSP_MAIN_GUESS + 1)); _o="$TSP_SYS_CPU/cpu$_n/online"
+        if [ -w "$_o" ] && [ "$(cat "$_o" 2>/dev/null)" = 0 ] && echo 1 > "$_o" 2>/dev/null; then
+            sleep 1; _k=0; [ -r "$TSP_SYS_CPU/cpu$_n/cpufreq/cpuinfo_max_freq" ] && read -r _k < "$TSP_SYS_CPU/cpu$_n/cpufreq/cpuinfo_max_freq"
+            if [ "${_k:-0}" -ge "$_best" ] 2>/dev/null; then TSP_DRAW_CPU=$_n; TSP_DRAW_ONLINED=$_n; _tier="$_tier +$_n"; else echo 0 > "$_o" 2>/dev/null; fi
+        fi
+    fi
+    echo "TSP_DRAWTHREAD_V1 core tier=[$_tier] @ ${_best} kHz main=cpu${TSP_MAIN_GUESS:-?} draw=cpu${TSP_DRAW_CPU:-none} onlined=${TSP_DRAW_ONLINED:-none} online_now=$(cat "$TSP_SYS_CPU/online" 2>/dev/null)" | tee -a "$TSP_PROG_TEE"
+fi
+# <<< TSP_DRAWTHREAD_V1 CORE END
+    tsp_cpu_optimize
+    tsp_cpu_governor_boost
+# >>> TSP_CPUCLOCK_V1 BEGIN
+# tsp_gpuprobe read every A133 core at 1,200,000 kHz for a whole run with the governor already on
+# performance; the silicon ceiling (cpuinfo_max_freq) is 2,000,000. Lift scaling_max_freq to the ceiling on
+# every online core (saved, put back on exit), enable the cpufreq boost knob where the driver has one, and log
+# the cooling-device state so a thermally throttled run is recognisable from the log alone.
+# clock=off in $GAMEDIR/tsp_drawthread_policy.txt skips it. Cores already at their ceiling are left alone.
+TSP_CLOCK_SAVE=/tmp/tsp-maxfreq.saved
+tsp_cpuclock_restore() {
+    [ -r "$TSP_CLOCK_SAVE" ] || return 0
+    while read -r _n _v; do
+        [ -n "$_n" ] || continue
+        if [ "$_n" = boost ]; then echo "$_v" > "$TSP_SYS_CPU/cpufreq/boost" 2>/dev/null; else echo "$_v" > "$TSP_SYS_CPU/cpu$_n/cpufreq/scaling_max_freq" 2>/dev/null; fi
+    done < "$TSP_CLOCK_SAVE"
+    rm -f "$TSP_CLOCK_SAVE"; echo "TSP_CPUCLOCK_V1 restored"
+}
+if grep -qs '^clock=off' "$GAMEDIR/tsp_drawthread_policy.txt"; then
+    echo "TSP_CPUCLOCK_V1 off (policy)" | tee -a "$TSP_PROG_TEE"
+else
+    : > "$TSP_CLOCK_SAVE"; _cl=""
+    for _d in "$TSP_SYS_CPU"/cpu[0-9]*; do
+        _n=${_d##*/cpu}; case "$_n" in ''|*[!0-9]*) continue ;; esac
+        [ -r "$_d/cpufreq/scaling_max_freq" ] || continue
+        _on=1; [ -r "$_d/online" ] && read -r _on < "$_d/online"; [ "$_on" = 1 ] || continue
+        read -r _smax < "$_d/cpufreq/scaling_max_freq"; _hmax=0; [ -r "$_d/cpufreq/cpuinfo_max_freq" ] && read -r _hmax < "$_d/cpufreq/cpuinfo_max_freq"
+        if [ "$_smax" -lt "$_hmax" ] 2>/dev/null; then
+            echo "$_n $_smax" >> "$TSP_CLOCK_SAVE"
+            if echo "$_hmax" > "$_d/cpufreq/scaling_max_freq" 2>/dev/null; then _cl="$_cl cpu$_n:$_smax->$(cat "$_d/cpufreq/scaling_max_freq" 2>/dev/null)"; else _cl="$_cl cpu$_n:$_smax->REFUSED"; fi
+        else
+            _cl="$_cl cpu$_n:$_smax=ceiling"
+        fi
+    done
+    if [ -w "$TSP_SYS_CPU/cpufreq/boost" ]; then _b0=$(cat "$TSP_SYS_CPU/cpufreq/boost" 2>/dev/null); [ "$_b0" = 1 ] || { echo "boost $_b0" >> "$TSP_CLOCK_SAVE"; echo 1 > "$TSP_SYS_CPU/cpufreq/boost" 2>/dev/null; }; _cl="$_cl boost:$_b0->$(cat "$TSP_SYS_CPU/cpufreq/boost" 2>/dev/null)"; fi
+    _cool=""; for _c in /sys/class/thermal/cooling_device*; do [ -r "$_c/type" ] || continue; _ct=$(cat "$_c/type"); case "$_ct" in *cpu*|*cluster*) _cool="$_cool $_ct:$(cat "$_c/cur_state" 2>/dev/null)/$(cat "$_c/max_state" 2>/dev/null)";; esac; done
+    echo "TSP_CPUCLOCK_V1 armed$_cl avail=[$(cat "$TSP_SYS_CPU/cpu0/cpufreq/scaling_available_frequencies" 2>/dev/null | tr -s ' ' ',')] cooling=[$_cool] temp=$(for _z in /sys/class/thermal/thermal_zone*/temp; do cat "$_z" 2>/dev/null; done | sort -n | tail -1)" | tee -a "$TSP_PROG_TEE"
+fi
+# <<< TSP_CPUCLOCK_V1 END
+    tsp_lever_prelaunch
+# ===================== TSP_AB_SWITCH_V1 ======================================
+# Two A/B flips, each driven by a flag file, so switching arms never needs a
+# script edit. Both branches log, so a run can never be misattributed.
+#
+#  /mnt/SDCARD/tsp_noscaler  -> drop the swap-scaler .so from TSP_LD_PRELOAD.
+#     TSP_SWAPSCALER_051_V35 logs scale=0 source=1280x720
+#     requested_output=1280x720 - a full-screen pass whose output equals its
+#     input - and tsp_gltime measured SwapWindow=11.5 ms of a 46.5 ms frame
+#     with vsync confirmed off. The resolution-lowering patch is kept, just
+#     bypassed while scale=0. In this launcher the entry is
+#     $GAMEDIR/lib/libtsp_fullscreen_scaler.so, assembled at line 1064 next to
+#     libtsp_warm.so and $TSP_GL4ES_LIBRARY - only the *scaler*.so entry is
+#     dropped, and every dropped entry is named in the log line.
+#
+#  /mnt/SDCARD/tsp_texsd     -> move /mnt/UDISK/openmw-tex/textures aside, so
+#     the data= root still exists (no missing-directory warning) but holds
+#     nothing, and every texture falls through to the SD copy. Touches NO
+#     config, so the mod manager never sees an out-of-sync openmw.cfg.
+#     The eMMC already carries the 891 MB navmesh and the 512 MB swapfile, and
+#     benched 2787 KB/s against the SD card's 5213.
+#
+# Flags are on the SD card so they can be removed over ssh even if a blank
+# screen makes the handheld unusable.
+
+if [ -f /mnt/SDCARD/tsp_noscaler ]; then
+  tsp_ab_before="$TSP_LD_PRELOAD"
+  tsp_ab_keep=""
+  tsp_ab_drop=""
+  tsp_ab_ifs="$IFS"
+  IFS=':'
+  for tsp_ab_p in $tsp_ab_before; do
+    [ -n "$tsp_ab_p" ] || continue
+    case "$tsp_ab_p" in
+      *scaler*.so|*Scaler*.so|*SCALER*.so)
+        tsp_ab_drop="$tsp_ab_drop $tsp_ab_p"; continue ;;
+    esac
+    if [ -n "$tsp_ab_keep" ]; then tsp_ab_keep="$tsp_ab_keep:$tsp_ab_p"
+    else tsp_ab_keep="$tsp_ab_p"; fi
+  done
+  IFS="$tsp_ab_ifs"
+  TSP_LD_PRELOAD="$tsp_ab_keep"
+  export TSP_LD_PRELOAD
+  echo "TSP_AB_SWITCH_V1 scaler=OFF dropped=[$tsp_ab_drop] preload=[$TSP_LD_PRELOAD]"
+  echo "TSP_AB_SWITCH_V1 scaler=OFF dropped=[$tsp_ab_drop] preload=[$TSP_LD_PRELOAD]" >> "$TSP_PROG"
+else
+  echo "TSP_AB_SWITCH_V1 scaler=ON preload=[$TSP_LD_PRELOAD]"
+  echo "TSP_AB_SWITCH_V1 scaler=ON preload=[$TSP_LD_PRELOAD]" >> "$TSP_PROG"
+fi
+
+if [ -f /mnt/SDCARD/tsp_texsd ]; then
+  [ -d /mnt/UDISK/openmw-tex/textures ] \
+    && mv /mnt/UDISK/openmw-tex/textures /mnt/UDISK/openmw-tex/textures.off 2>/dev/null
+  tsp_ab_arm="SD"
+else
+  [ -d /mnt/UDISK/openmw-tex/textures.off ] \
+    && mv /mnt/UDISK/openmw-tex/textures.off /mnt/UDISK/openmw-tex/textures 2>/dev/null
+  tsp_ab_arm="UDISK"
+fi
+if [ -d /mnt/UDISK/openmw-tex/textures ]; then tsp_ab_live="present"; else tsp_ab_live="movedAside"; fi
+echo "TSP_AB_SWITCH_V1 texroot=$tsp_ab_arm udisk_textures=$tsp_ab_live"
+echo "TSP_AB_SWITCH_V1 texroot=$tsp_ab_arm udisk_textures=$tsp_ab_live" >> "$TSP_PROG"
+# =================== end TSP_AB_SWITCH_V1 ====================================
+
+
+# >>> TSP_AUTO_FREEZE_MONITOR_V1 BEGIN
+# Always-on freeze telemetry, intentionally OUTSIDE the OpenMW/libGL call path.
+#
+# Design constraints:
+#   * does not change LD_PRELOAD, LIBGL_*, OSG_*, OpenMW settings, swap, clocks,
+#     controller handling, save loading, or the known-good launch command;
+#   * starts only after OpenMW has already been exec'd;
+#   * waits 60 seconds before touching /proc so normal menu/save startup is left alone;
+#   * samples read-only process/kernel/GPU state every 2 seconds;
+#   * keeps only latest + previous runs;
+#   * captures new kernel messages continuously where dmesg -w is supported;
+#   * takes a deeper thread/GPU snapshot if OpenMW stops making CPU progress for 8s.
+#
+# Disable without editing the launcher:
+#   touch "$GAMEDIR/tsp_freeze_monitor_off"
+TSP_FREEZE_MONITOR_PID=""
+
+tsp_freeze_monitor_stop() {
+    if [ -n "${TSP_FREEZE_MONITOR_PID:-}" ] && kill -0 "$TSP_FREEZE_MONITOR_PID" 2>/dev/null; then
+        kill "$TSP_FREEZE_MONITOR_PID" 2>/dev/null || true
+        wait "$TSP_FREEZE_MONITOR_PID" 2>/dev/null || true
+    fi
+    TSP_FREEZE_MONITOR_PID=""
+}
+
+tsp_freeze_monitor_snapshot() {
+    _fm_pid="$1"
+    _fm_dir="$2"
+    _fm_n="$3"
+    _fm_s="$_fm_dir/stall-$_fm_n"
+    mkdir -p "$_fm_s"
+
+    cp -f "/proc/$_fm_pid/status" "$_fm_s/status.txt" 2>/dev/null || true
+    cp -f "/proc/$_fm_pid/smaps_rollup" "$_fm_s/smaps_rollup.txt" 2>/dev/null || true
+    cp -f /proc/meminfo "$_fm_s/meminfo.txt" 2>/dev/null || true
+    cp -f /proc/vmstat "$_fm_s/vmstat.txt" 2>/dev/null || true
+    cp -f /proc/swaps "$_fm_s/swaps.txt" 2>/dev/null || true
+    cp -f /proc/interrupts "$_fm_s/interrupts.txt" 2>/dev/null || true
+
+    {
+        echo "TSP_AUTO_FREEZE_MONITOR_V1 stall=$_fm_n date=$(date 2>/dev/null)"
+        echo "--- threads ---"
+        for _fm_td in /proc/"$_fm_pid"/task/[0-9]*; do
+            [ -r "$_fm_td/stat" ] || continue
+            IFS= read -r _fm_sl < "$_fm_td/stat" || continue
+            _fm_rest=${_fm_sl##*) }
+            set -- $_fm_rest
+            _fm_state=${1:-?}
+            _fm_ut=${12:-0}
+            _fm_st=${13:-0}
+            _fm_cpu=${37:-?}
+            _fm_wc=""
+            [ -r "$_fm_td/wchan" ] && IFS= read -r _fm_wc < "$_fm_td/wchan"
+            echo "tid=${_fm_td##*/} state=$_fm_state ticks=$((_fm_ut + _fm_st)) cpu=$_fm_cpu wchan=$_fm_wc"
+        done
+
+        echo "--- gpu-ish interrupts ---"
+        grep -Ei 'pvr|powervr|rogue|sgx|gpu|mali' /proc/interrupts 2>/dev/null || true
+
+        echo "--- /proc/pvr ---"
+        if [ -d /proc/pvr ]; then
+            for _fm_f in /proc/pvr/*; do
+                [ -r "$_fm_f" ] || continue
+                echo "### $_fm_f"
+                head -n 100 "$_fm_f" 2>/dev/null || true
+            done
+        fi
+
+        echo "--- GPU sysfs ---"
+        for _fm_f in \
+            /sys/devices/platform/gpu/scenectrl/status \
+            /sys/devices/platform/gpu/scenectrl/command \
+            /sys/class/devfreq/*gpu*/cur_freq \
+            /sys/class/devfreq/*gpu*/governor
+        do
+            [ -r "$_fm_f" ] || continue
+            echo "### $_fm_f"
+            cat "$_fm_f" 2>/dev/null || true
+        done
+
+        echo "--- dmesg tail ---"
+        dmesg 2>/dev/null | tail -n 180
+    } > "$_fm_s/detail.txt" 2>&1
+}
+
+tsp_freeze_monitor_run() {
+    _fm_pid="$1"
+
+    # Deliberately leave initial menu/save startup alone.
+    sleep 60
+    kill -0 "$_fm_pid" 2>/dev/null || return 0
+
+    _fm_base="$GAMEDIR/tsp_freeze_monitor"
+    _fm_latest="$_fm_base/latest"
+    _fm_prev="$_fm_base/previous"
+
+    mkdir -p "$_fm_base"
+    rm -rf "$_fm_prev" 2>/dev/null || true
+    [ -d "$_fm_latest" ] && mv "$_fm_latest" "$_fm_prev" 2>/dev/null || true
+    mkdir -p "$_fm_latest"
+
+    echo "$_fm_pid" > "$_fm_latest/openmw.pid"
+    echo "$$" > "$_fm_latest/monitor.pid"
+
+    {
+        echo "TSP_AUTO_FREEZE_MONITOR_V1"
+        echo "started=$(date 2>/dev/null)"
+        echo "delay_s=60"
+        echo "sample_s=2"
+        echo "gamedir=$GAMEDIR"
+        echo "openmw_pid=$_fm_pid"
+        echo "kernel=$(uname -a 2>/dev/null)"
+        echo "uptime=$(cat /proc/uptime 2>/dev/null)"
+        echo "launcher_sha=$(sha256sum "$0" 2>/dev/null | awk '{print $1}')"
+        echo "openmw_sha=$(sha256sum "$OPENMW_BIN" 2>/dev/null | awk '{print $1}')"
+        echo "libgl_path=$TSP_GL4ES_LIBRARY"
+        echo "libgl_sha=$(sha256sum "$TSP_GL4ES_LIBRARY" 2>/dev/null | awk '{print $1}')"
+        echo "--- os-release ---"
+        cat /etc/os-release 2>/dev/null || true
+        echo "--- command line ---"
+        tr '\0' ' ' < "/proc/$_fm_pid/cmdline" 2>/dev/null || true
+        echo
+        echo "--- relevant environment ---"
+        tr '\0' '\n' < "/proc/$_fm_pid/environ" 2>/dev/null \
+            | grep -E '^(LD_PRELOAD|LD_LIBRARY_PATH|LIBGL_|OSG_|OPENMW_|TSP_)' 2>/dev/null || true
+        echo "--- loaded GL/GPU/shim mappings ---"
+        grep -Ei 'libGL|GLES|EGL|pvr|mali|tsp_|OpenThreads|osg' "/proc/$_fm_pid/maps" 2>/dev/null || true
+        echo "--- libGL marker census ---"
+        if [ -r "$TSP_GL4ES_LIBRARY" ]; then
+            for _fm_m in \
+                TSP_MAXCOLORATTACH TSP_PASSSTATE_V5 LIBGL_TSP_FBODUMP \
+                GL_PIXEL_UNPACK_BUFFER TSP_VBO_ORPHAN TSP_RTT
+            do
+                _fm_n=$(grep -a -c "$_fm_m" "$TSP_GL4ES_LIBRARY" 2>/dev/null || true)
+                echo "$_fm_m=$_fm_n"
+            done
+        fi
+        echo "--- swaps ---"
+        cat /proc/swaps 2>/dev/null || true
+        echo "--- gpu-ish interrupts ---"
+        grep -Ei 'pvr|powervr|rogue|sgx|gpu|mali' /proc/interrupts 2>/dev/null || true
+        echo "--- pstore before freeze ---"
+        ls -l /sys/fs/pstore 2>/dev/null || true
+    } > "$_fm_latest/identity.txt" 2>&1
+
+    cp -f "/proc/$_fm_pid/maps" "$_fm_latest/openmw.maps" 2>/dev/null || true
+    cp -f "/proc/$_fm_pid/smaps_rollup" "$_fm_latest/openmw.smaps_rollup.start" 2>/dev/null || true
+
+    # Follow NEW kernel messages. If this BusyBox dmesg lacks -w, fall back to
+    # a low-frequency tail snapshot. This child is killed by the monitor trap.
+    : > "$_fm_latest/kernel-live.txt"
+    dmesg -w >> "$_fm_latest/kernel-live.txt" 2>&1 &
+    _fm_klog=$!
+    sleep 1
+    if ! kill -0 "$_fm_klog" 2>/dev/null; then
+        wait "$_fm_klog" 2>/dev/null || true
+        (
+            _fm_kt=0
+            while kill -0 "$_fm_pid" 2>/dev/null; do
+                {
+                    echo "===== dmesg t=$_fm_kt ====="
+                    dmesg 2>/dev/null | tail -n 140
+                } >> "$_fm_latest/kernel-live.txt"
+                _fm_kt=$((_fm_kt + 30))
+                sleep 30
+            done
+        ) &
+        _fm_klog=$!
+        echo "kernel_log_mode=30s-snapshots" >> "$_fm_latest/identity.txt"
+    else
+        echo "kernel_log_mode=dmesg-w" >> "$_fm_latest/identity.txt"
+    fi
+
+    trap 'kill "$_fm_klog" 2>/dev/null || true; wait "$_fm_klog" 2>/dev/null || true; exit 0' TERM INT HUP EXIT
+
+    cat > "$_fm_latest/system.tsv" <<'TSP_FREEZE_MONITOR_HEADER'
+# TSP_AUTO_FREEZE_MONITOR_V1
+# t state wchan rss_kb vsz_kb data_kb vmswap_kb rssanon_kb rssfile_kb rssshmem_kb threads fds memavail_kb memfree_kb cached_kb sreclaim_kb slab_kb shmem_kb cmafree_kb swapfree_kb swapcached_kb zram_orig_bytes zram_compr_bytes zram_mem_bytes psi_cpu psi_mem psi_io minflt majflt utime stime pgmajfault pswpin pswpout scan_direct steal_direct allocstall oom_kill ctxt running blocked io_read io_write gpu_irq loop_rsect loop_wsect loop_inflight loop_ioticks temp_max_mC cpu_max_khz gpu_khz scene
+TSP_FREEZE_MONITOR_HEADER
+
+    # If swap is image-backed through loop, retain the block-device counters.
+    _fm_loopstat=""
+    while read -r _fm_dev _fm_type _fm_size _fm_used _fm_prio; do
+        case "$_fm_dev" in
+            /dev/loop*)
+                _fm_ln=${_fm_dev##*/}
+                [ -r "/sys/block/$_fm_ln/stat" ] && _fm_loopstat="/sys/block/$_fm_ln/stat"
+                ;;
+        esac
+    done < /proc/swaps
+
+    _fm_t=0
+    _fm_lastticks=""
+    _fm_still=0
+    _fm_stalln=0
+    _fm_progress_seen=0
+
+    while kill -0 "$_fm_pid" 2>/dev/null; do
+        _fm_state=na; _fm_rss=na; _fm_vsz=na; _fm_data=na; _fm_swap=na
+        _fm_anon=na; _fm_file=na; _fm_shm=na; _fm_thr=na
+        while read -r _fm_k _fm_v _fm_x; do
+            case "$_fm_k" in
+                State:) _fm_state=$_fm_v ;;
+                VmRSS:) _fm_rss=$_fm_v ;;
+                VmSize:) _fm_vsz=$_fm_v ;;
+                VmData:) _fm_data=$_fm_v ;;
+                VmSwap:) _fm_swap=$_fm_v ;;
+                RssAnon:) _fm_anon=$_fm_v ;;
+                RssFile:) _fm_file=$_fm_v ;;
+                RssShmem:) _fm_shm=$_fm_v ;;
+                Threads:) _fm_thr=$_fm_v ;;
+            esac
+        done < "/proc/$_fm_pid/status"
+
+        _fm_wchan=na
+        [ -r "/proc/$_fm_pid/wchan" ] && IFS= read -r _fm_wchan < "/proc/$_fm_pid/wchan"
+
+        _fm_fds=0
+        for _fm_fd in /proc/"$_fm_pid"/fd/*; do
+            [ -e "$_fm_fd" ] && _fm_fds=$((_fm_fds + 1))
+        done
+
+        _fm_ma=na; _fm_mf=na; _fm_cached=na; _fm_srec=na; _fm_slab=na
+        _fm_shmem=na; _fm_cma=na; _fm_swfree=na; _fm_swcached=na
+        while read -r _fm_k _fm_v _fm_x; do
+            case "$_fm_k" in
+                MemAvailable:) _fm_ma=$_fm_v ;;
+                MemFree:) _fm_mf=$_fm_v ;;
+                Cached:) _fm_cached=$_fm_v ;;
+                SReclaimable:) _fm_srec=$_fm_v ;;
+                Slab:) _fm_slab=$_fm_v ;;
+                Shmem:) _fm_shmem=$_fm_v ;;
+                CmaFree:) _fm_cma=$_fm_v ;;
+                SwapFree:) _fm_swfree=$_fm_v ;;
+                SwapCached:) _fm_swcached=$_fm_v ;;
+            esac
+        done < /proc/meminfo
+
+        _fm_zorig=na; _fm_zcompr=na; _fm_zmem=na
+        for _fm_zs in /sys/block/zram*/mm_stat; do
+            [ -r "$_fm_zs" ] || continue
+            read -r _fm_zorig _fm_zcompr _fm_zmem _fm_zrest < "$_fm_zs" || true
+            break
+        done
+
+        _fm_pc=na; _fm_pm=na; _fm_pi=na
+        if [ -r /proc/pressure/cpu ]; then
+            while read -r _fm_kind _fm_rest; do
+                case "$_fm_kind" in some) set -- $_fm_rest; _fm_pc=${1#avg10=}; break ;; esac
+            done < /proc/pressure/cpu
+        fi
+        if [ -r /proc/pressure/memory ]; then
+            while read -r _fm_kind _fm_rest; do
+                case "$_fm_kind" in some) set -- $_fm_rest; _fm_pm=${1#avg10=}; break ;; esac
+            done < /proc/pressure/memory
+        fi
+        if [ -r /proc/pressure/io ]; then
+            while read -r _fm_kind _fm_rest; do
+                case "$_fm_kind" in some) set -- $_fm_rest; _fm_pi=${1#avg10=}; break ;; esac
+            done < /proc/pressure/io
+        fi
+
+        _fm_min=na; _fm_maj=na; _fm_ut=na; _fm_st=na; _fm_ticks=""
+        if IFS= read -r _fm_statline < "/proc/$_fm_pid/stat"; then
+            _fm_rest=${_fm_statline##*) }
+            set -- $_fm_rest
+            _fm_min=${8:-na}
+            _fm_maj=${10:-na}
+            _fm_ut=${12:-na}
+            _fm_st=${13:-na}
+            case "$_fm_ut:$_fm_st" in
+                *[!0-9:]*|"") ;;
+                *) _fm_ticks=$((_fm_ut + _fm_st)) ;;
+            esac
+        fi
+
+        _fm_pgmaj=na; _fm_psin=na; _fm_psout=na
+        _fm_scan=0; _fm_steal=0; _fm_alloc=0; _fm_oom=0
+        while read -r _fm_k _fm_v _fm_x; do
+            case "$_fm_k" in
+                pgmajfault) _fm_pgmaj=$_fm_v ;;
+                pswpin) _fm_psin=$_fm_v ;;
+                pswpout) _fm_psout=$_fm_v ;;
+                pgscan_direct|pgscan_direct_*) _fm_scan=$((_fm_scan + _fm_v)) ;;
+                pgsteal_direct|pgsteal_direct_*) _fm_steal=$((_fm_steal + _fm_v)) ;;
+                allocstall|allocstall_*) _fm_alloc=$((_fm_alloc + _fm_v)) ;;
+                oom_kill) _fm_oom=$_fm_v ;;
+            esac
+        done < /proc/vmstat
+
+        _fm_ctxt=na; _fm_run=na; _fm_block=na
+        while read -r _fm_k _fm_v _fm_x; do
+            case "$_fm_k" in
+                ctxt) _fm_ctxt=$_fm_v ;;
+                procs_running) _fm_run=$_fm_v ;;
+                procs_blocked) _fm_block=$_fm_v ;;
+            esac
+        done < /proc/stat
+
+        _fm_ior=na; _fm_iow=na
+        if [ -r "/proc/$_fm_pid/io" ]; then
+            while read -r _fm_k _fm_v; do
+                case "$_fm_k" in
+                    read_bytes:) _fm_ior=$_fm_v ;;
+                    write_bytes:) _fm_iow=$_fm_v ;;
+                esac
+            done < "/proc/$_fm_pid/io"
+        fi
+
+        _fm_irq=0
+        while IFS= read -r _fm_line; do
+            case "$_fm_line" in
+                *pvr*|*PVR*|*powervr*|*PowerVR*|*rogue*|*Rogue*|*sgx*|*SGX*|*gpu*|*GPU*|*mali*|*Mali*)
+                    set -- $_fm_line
+                    shift
+                    for _fm_x in "$@"; do
+                        case "$_fm_x" in
+                            *[!0-9]*) break ;;
+                            *) _fm_irq=$((_fm_irq + _fm_x)) ;;
+                        esac
+                    done
+                    ;;
+            esac
+        done < /proc/interrupts
+
+        _fm_lr=na; _fm_lw=na; _fm_linf=na; _fm_liot=na
+        if [ -n "$_fm_loopstat" ] && [ -r "$_fm_loopstat" ]; then
+            read -r _fm_rdone _fm_rmerge _fm_lr _fm_rms \
+                _fm_wdone _fm_wmerge _fm_lw _fm_wms \
+                _fm_linf _fm_liot _fm_weighted < "$_fm_loopstat"
+        fi
+
+        _fm_temp=na; _fm_tmax=-1
+        for _fm_z in /sys/class/thermal/thermal_zone*/temp; do
+            [ -r "$_fm_z" ] || continue
+            IFS= read -r _fm_tv < "$_fm_z" || continue
+            case "$_fm_tv" in ''|*[!0-9]*) continue ;; esac
+            [ "$_fm_tv" -gt "$_fm_tmax" ] && _fm_tmax=$_fm_tv
+        done
+        [ "$_fm_tmax" -ge 0 ] && _fm_temp=$_fm_tmax
+
+        _fm_cpu=na
+        for _fm_c in /sys/devices/system/cpu/cpu*/cpufreq/scaling_cur_freq; do
+            [ -r "$_fm_c" ] || continue
+            IFS= read -r _fm_cv < "$_fm_c" || continue
+            case "$_fm_cv" in ''|*[!0-9]*) continue ;; esac
+            case "$_fm_cpu" in
+                na) _fm_cpu=$_fm_cv ;;
+                *) [ "$_fm_cv" -gt "$_fm_cpu" ] && _fm_cpu=$_fm_cv ;;
+            esac
+        done
+
+        _fm_gpu=na
+        for _fm_g in /sys/class/devfreq/*gpu*/cur_freq; do
+            [ -r "$_fm_g" ] || continue
+            IFS= read -r _fm_gv < "$_fm_g" || continue
+            [ -n "$_fm_gv" ] && { _fm_gpu=$_fm_gv; break; }
+        done
+
+        _fm_scene=na
+        if [ -r /sys/devices/platform/gpu/scenectrl/status ]; then
+            IFS=' ' read -r _fm_scene _fm_scene_rest < /sys/devices/platform/gpu/scenectrl/status || _fm_scene=na
+        fi
+
+        printf '%s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s\n' \
+            "$_fm_t" "$_fm_state" "$_fm_wchan" "$_fm_rss" "$_fm_vsz" "$_fm_data" "$_fm_swap" \
+            "$_fm_anon" "$_fm_file" "$_fm_shm" "$_fm_thr" "$_fm_fds" \
+            "$_fm_ma" "$_fm_mf" "$_fm_cached" "$_fm_srec" "$_fm_slab" "$_fm_shmem" "$_fm_cma" \
+            "$_fm_swfree" "$_fm_swcached" "$_fm_zorig" "$_fm_zcompr" "$_fm_zmem" "$_fm_pc" "$_fm_pm" "$_fm_pi" \
+            "$_fm_min" "$_fm_maj" "$_fm_ut" "$_fm_st" "$_fm_pgmaj" "$_fm_psin" "$_fm_psout" \
+            "$_fm_scan" "$_fm_steal" "$_fm_alloc" "$_fm_oom" "$_fm_ctxt" "$_fm_run" "$_fm_block" \
+            "$_fm_ior" "$_fm_iow" "$_fm_irq" "$_fm_lr" "$_fm_lw" "$_fm_linf" "$_fm_liot" \
+            "$_fm_temp" "$_fm_cpu" "$_fm_gpu" "$_fm_scene" >> "$_fm_latest/system.tsv"
+
+        if [ -n "$_fm_ticks" ]; then
+            if [ -n "$_fm_lastticks" ] && [ "$_fm_ticks" = "$_fm_lastticks" ]; then
+                _fm_still=$((_fm_still + 1))
+            else
+                _fm_still=0
+                _fm_progress_seen=1
+            fi
+            _fm_lastticks=$_fm_ticks
+        fi
+
+        if [ "$_fm_progress_seen" = 1 ] && [ "$_fm_still" -eq 4 ]; then
+            _fm_stalln=$((_fm_stalln + 1))
+            tsp_freeze_monitor_snapshot "$_fm_pid" "$_fm_latest" "$_fm_stalln"
+        fi
+
+        # Once per minute, preserve a lightweight GPU/PVR trajectory even if
+        # the whole kernel freezes before an 8-second stall snapshot can run.
+        if [ $((_fm_t % 60)) -eq 0 ]; then
+            {
+                echo "===== t=$_fm_t date=$(date 2>/dev/null) ====="
+                grep -Ei 'pvr|powervr|rogue|sgx|gpu|mali' /proc/interrupts 2>/dev/null || true
+                if [ -r /sys/devices/platform/gpu/scenectrl/status ]; then
+                    echo "--- scenectrl ---"
+                    cat /sys/devices/platform/gpu/scenectrl/status 2>/dev/null || true
+                fi
+                if [ -d /proc/pvr ]; then
+                    for _fm_f in /proc/pvr/*; do
+                        [ -r "$_fm_f" ] || continue
+                        echo "### $_fm_f"
+                        head -n 80 "$_fm_f" 2>/dev/null || true
+                    done
+                fi
+            } >> "$_fm_latest/gpu-minute.txt" 2>&1
+        fi
+
+        _fm_t=$((_fm_t + 2))
+        sleep 2
+    done
+
+    {
+        echo "ended=$(date 2>/dev/null)"
+        echo "elapsed_sampled_s=$_fm_t"
+        echo "openmw_alive=no"
+    } > "$_fm_latest/end.txt"
+}
+
+tsp_freeze_monitor_start() {
+    _fm_pid="$1"
+
+    if [ -f "$GAMEDIR/tsp_freeze_monitor_off" ]; then
+        echo "TSP_AUTO_FREEZE_MONITOR_V1 disabled by $GAMEDIR/tsp_freeze_monitor_off"
+        TSP_FREEZE_MONITOR_PID=""
+        return 0
+    fi
+
+    tsp_freeze_monitor_run "$_fm_pid" &
+    TSP_FREEZE_MONITOR_PID=$!
+    echo "TSP_AUTO_FREEZE_MONITOR_V1 armed pid=$TSP_FREEZE_MONITOR_PID openmw=$_fm_pid delay=60s out=$GAMEDIR/tsp_freeze_monitor/latest"
+}
+# <<< TSP_AUTO_FREEZE_MONITOR_V1 END
+
+    tsp_muos_audio_start
+
+    LD_PRELOAD="$TSP_LD_PRELOAD" "$OPENMW_BIN" \
+        --resources "$OPENMW_RESOURCES" \
+        --user-data-dir "$SAVE_DIR" \
+        --config "$CONFIG_DIR" &
+
+    OPENMW_PID=$!
+    tsp_freeze_monitor_start "$OPENMW_PID"
+# >>> TSP_DRAWTHREAD_V1 KEEPER BEGIN
+# Main thread stays where TSP_CPU_OPTIMIZE_V2 puts it. The hottest non-main thread (= the OSG draw thread once
+# the world is up; 10% hysteresis so a loading worker does not steal the core) is pinned to cpu$TSP_DRAW_CPU and
+# every other thread kept off it, re-checked every 5s: tsp_cpu_apply_split scatters them at 8/25/60s and OSG
+# re-creates the draw thread with an all-CPU mask on settings changes. Every 60s a sample line (per-thread CPU
+# over 10s) goes to this log and tsp_prog.txt. pin=off in the policy file = samples only. Onlined core goes back.
+TSP_DRAW_MASK=""; TSP_REST_MASK=""; TSP_IDLE_PARK=0
+grep -qs '^idle=main' "$GAMEDIR/tsp_drawthread_policy.txt" && [ -n "${TSP_CPU_MAIN_MASK:-}" ] && TSP_IDLE_PARK=1
+if [ -n "$TSP_DRAW_CPU" ] && [ -n "${TSP_CPU_BG_MASK:-}" ] && ! grep -qs '^pin=off' "$GAMEDIR/tsp_drawthread_policy.txt"; then
+    TSP_DRAW_MASK=$(printf '%x' $(( 1 << TSP_DRAW_CPU )))
+    TSP_REST_MASK=$(printf '%x' $(( 0x$TSP_CPU_BG_MASK & ~(1 << TSP_DRAW_CPU) )))
+    [ "$TSP_REST_MASK" = 0 ] && TSP_REST_MASK=$TSP_CPU_BG_MASK
+fi
+echo "TSP_DRAWTHREAD_V1 armed model=$OSG_THREADING main=cpu${TSP_CPU_MAIN:-?}/${TSP_CPU_MAIN_MASK:-none} draw=cpu${TSP_DRAW_CPU:-none}/${TSP_DRAW_MASK:-none} rest=${TSP_REST_MASK:-${TSP_CPU_BG_MASK:-none}} idle_park=$TSP_IDLE_PARK pid=$OPENMW_PID $(date '+%F %T')" | tee -a "$TSP_PROG_TEE"
+tsp_dt_snap() {   # one line per thread: tid ticks lastcpu allowed policy(0=normal 5=SCHED_IDLE)
+    for _t in /proc/"$OPENMW_PID"/task/[0-9]*; do
+        _s=$(cat "$_t/stat" 2>/dev/null) || continue; _r="${_s##*) }"; set -- $_r
+        echo "${_t##*/} $(( ${12} + ${13} )) ${37} $(grep Cpus_allowed_list "$_t/status" 2>/dev/null | cut -f2) ${39}"
+    done
+}
+tsp_dt_mask() { taskset -p "$1" 2>/dev/null | sed 's/.*: *//'; }   # current hex mask of a tid
+tsp_dt_wait() {   # 20 samples over ~2s of one tid: R/S/D counts + the two commonest kernel wait channels
+    _wt=$1; _wf=/tmp/tsp_dt_w.$OPENMW_PID; : > "$_wf"; _wn=0
+    while [ $_wn -lt 20 ]; do
+        _ws=$(cat /proc/$OPENMW_PID/task/$_wt/stat 2>/dev/null) || break; _wr="${_ws##*) }"; set -- $_wr
+        echo "$1 $(cat /proc/$OPENMW_PID/task/$_wt/wchan 2>/dev/null)" >> "$_wf"; _wn=$((_wn+1)); sleep 0.1 2>/dev/null || sleep 1
+    done
+    echo "$(cut -c1 "$_wf" | sort | uniq -c | sort -rn | awk '{printf "%s%s,", $2, $1}')$(awk '$1!="R" && NF>1 && $2!="0" {print $2}' "$_wf" | sort | uniq -c | sort -rn | head -2 | awk '{printf " %s(%s)", $2, $1}')"
+    rm -f "$_wf"
+}
+tsp_dt_env() {   # freq of the main and draw cores + hottest thermal zone
+    _e="khz=main:$(cat "$TSP_SYS_CPU/cpu${TSP_CPU_MAIN:-0}/cpufreq/scaling_cur_freq" 2>/dev/null)"
+    [ -n "$TSP_DRAW_CPU" ] && _e="$_e/draw:$(cat "$TSP_SYS_CPU/cpu$TSP_DRAW_CPU/cpufreq/scaling_cur_freq" 2>/dev/null)"
+    _tmax=0; for _z in /sys/class/thermal/thermal_zone*/temp; do _tv=$(cat "$_z" 2>/dev/null); case "$_tv" in ''|*[!0-9]*) continue;; esac; [ "$_tv" -gt "$_tmax" ] && _tmax=$_tv; done
+    [ "$_tmax" -gt 1000 ] && _tmax=$((_tmax / 1000))
+    echo "$_e temp=$_tmax"
+}
+(
+    _i=0; _draw=""; _A=/tmp/tsp_dt_a.$OPENMW_PID; _P=/tmp/tsp_dt_p.$OPENMW_PID; _S1=/tmp/tsp_dt_s1.$OPENMW_PID; _S2=/tmp/tsp_dt_s2.$OPENMW_PID
+    tsp_dt_snap > "$_P"
+    while kill -0 "$OPENMW_PID" 2>/dev/null; do
+        _i=$((_i+1))
+        if [ -n "$TSP_DRAW_MASK" ] && [ $((_i % 5)) = 0 ]; then
+            tsp_dt_snap > "$_A"
+            set -- $(awk -v main="$OPENMW_PID" -v cur="$_draw" 'NR==FNR { t0[$1]=$2; next } ($1 in t0 && $1!=main && $5!=5) { d=$2-t0[$1]; if ($1==cur) cd=d; if (d>best) { best=d; tid=$1 } } END { if (best>=75) printf "%s %d %d\n", tid, best/5, cd/5 }' "$_P" "$_A")
+            cp "$_A" "$_P"
+            if [ -n "${1:-}" ] && [ "$1" != "$_draw" ] && { [ -z "$_draw" ] || [ "$2" -ge $(( ${3:-0} + 10 )) ]; }; then
+                [ -n "$_draw" ] && taskset -p "$TSP_REST_MASK" "$_draw" >/dev/null 2>&1
+                taskset -p "$TSP_DRAW_MASK" "$1" >/dev/null 2>&1 && echo "TSP_DRAWTHREAD_V1 pin draw tid=$1 (${2}%, was tid=${_draw:-none} ${3:-0}%) -> cpu$TSP_DRAW_CPU at +${_i}s"
+                _draw=$1
+            fi
+            if [ -n "$_draw" ]; then
+                for _t in /proc/"$OPENMW_PID"/task/[0-9]*; do
+                    _tid=${_t##*/}; _m=$(tsp_dt_mask "$_tid"); [ -n "$_m" ] || continue
+                    if [ "$TSP_IDLE_PARK" = 1 ] && [ "$(awk -v t="$_tid" '$1==t {print $5}' "$_A")" = 5 ]; then
+                        [ $(( 0x$_m )) = $(( 0x$TSP_CPU_MAIN_MASK )) ] || { taskset -p "$TSP_CPU_MAIN_MASK" "$_tid" >/dev/null 2>&1 && echo "TSP_DRAWTHREAD_V1 park SCHED_IDLE tid=$_tid was $_m -> cpu$TSP_CPU_MAIN (idle=main) at +${_i}s"; }
+                    elif [ "$_tid" = "$_draw" ]; then
+                        [ $(( 0x$_m )) = $(( 0x$TSP_DRAW_MASK )) ] || { taskset -p "$TSP_DRAW_MASK" "$_tid" >/dev/null 2>&1 && echo "TSP_DRAWTHREAD_V1 re-pin draw tid=$_tid was $_m -> cpu$TSP_DRAW_CPU at +${_i}s"; }
+                    elif [ "$_tid" = "$OPENMW_PID" ]; then
+                        [ $(( 0x$_m )) = $(( 0x$TSP_CPU_MAIN_MASK )) ] || taskset -p "$TSP_CPU_MAIN_MASK" "$_tid" >/dev/null 2>&1
+                    elif [ $(( 0x$_m & (1 << TSP_DRAW_CPU) )) != 0 ]; then
+                        taskset -p "$TSP_REST_MASK" "$_tid" >/dev/null 2>&1
+                    fi
+                done
+            fi
+        fi
+        # TSP_QUIET_V1 TELEMETRY - measurement only, and not cheap: two full
+        # /proc/<pid>/task snapshots plus tsp_dt_wait busy-sampling two threads
+        # for ~4 s of every 60. The pin maintenance above is the FEATURE and
+        # still runs. quiet=off in tsp_drawthread_policy.txt brings this back.
+        if [ "$TSP_QUIET" != 1 ]; then
+        case $((_i % 60)) in
+            20) tsp_dt_snap > "$_S1" ;;
+            30) tsp_dt_snap > "$_S2"
+                _wm=$(tsp_dt_wait "$OPENMW_PID"); _wd=""; [ -n "$_draw" ] && _wd=$(tsp_dt_wait "$_draw")
+                awk -v main="$OPENMW_PID" -v at="$_i" -v model="$OSG_THREADING" -v env="$(tsp_dt_env)" -v wm="$_wm" -v wd="$_wd" -v draw="$_draw" 'NR==FNR { t0[$1]=$2; next } ($1 in t0) { d=($2-t0[$1])/10.0; if (d>=20) hot++; tot+=d; if (d>=5) top=top " " $1 ($1==main ? "(main)" : ($1==draw ? "(draw)" : "")) "=" int(d+0.5) "%@cpu" $3 "/" $4 ($5==5 ? "/IDLE" : "") } END { printf "TSP_DRAWTHREAD_V1 sample +%ss model=%s hot(>=20%%)=%d total=%.0f%% %s threads:%s | wait main=%s draw=%s\n", at, model, hot, tot, env, top, wm, wd }' "$_S1" "$_S2" | tee -a "$TSP_PROG_TEE" ;;
+        esac
+        fi
+        sleep 1
+    done
+    rm -f "$_A" "$_P" "$_S1" "$_S2"
+    [ -n "$TSP_DRAW_ONLINED" ] && { echo 0 > "$TSP_SYS_CPU/cpu$TSP_DRAW_ONLINED/online" 2>/dev/null; echo "TSP_DRAWTHREAD_V1 cpu$TSP_DRAW_ONLINED back offline: online_now=$(cat "$TSP_SYS_CPU/online" 2>/dev/null)"; }
+    tsp_cpuclock_restore 2>/dev/null || true
+) &
+TSP_DRAWTHREAD_KEEPER_PID=$!
+# <<< TSP_DRAWTHREAD_V1 KEEPER END
+    tsp_cpu_apply_split "$OPENMW_PID" &
+# >>> TSP_V36_PERF_MONITOR_START BEGIN
+if [ "$TSP_QUIET" = 1 ]; then TSP_PERF_MONITOR_PID=""; else   # TSP_QUIET_V1 PERF
+tsp_perf_sampler "$OPENMW_PID" &
+TSP_PERF_MONITOR_PID=$!
+fi
+
+echo "Performance telemetry: $TSP_PERF_LOG"
+echo "Performance monitor pid: $TSP_PERF_MONITOR_PID"
+# <<< TSP_V36_PERF_MONITOR_START END
+    echo "OpenMW pid: $OPENMW_PID"
+
+    wait "$OPENMW_PID"
+    OPENMW_EXIT_CODE=$?
+    tsp_lever_restore 2>/dev/null || true
+# >>> TSP_V36_PERF_MONITOR_STOP BEGIN
+if [ -n "${TSP_PERF_MONITOR_PID:-}" ]; then
+    kill         "$TSP_PERF_MONITOR_PID"         2>/dev/null ||
+        true
+
+    wait         "$TSP_PERF_MONITOR_PID"         2>/dev/null ||
+        true
+
+    TSP_PERF_MONITOR_PID=""
+fi
+# <<< TSP_V36_PERF_MONITOR_STOP END
+    tsp_freeze_monitor_stop 2>/dev/null || true
+    OPENMW_PID=""
+
+    echo "OpenMW 0.51 exited with code: $OPENMW_EXIT_CODE"
+
+    if [ -f "$RESOLUTION_RESTART_MARKER" ]; then
+        REQUESTED_RESOLUTION="$(
+            tr -d '\r\n' < "$RESOLUTION_RESTART_MARKER" 2>/dev/null
+        )"
+
+        rm -f "$RESOLUTION_RESTART_MARKER" 2>/dev/null || true
+
+        echo
+        echo "============================================================"
+        echo "TSP AUTOMATIC INTERNAL-RESOLUTION RESTART"
+        echo "============================================================"
+        echo "Requested: ${REQUESTED_RESOLUTION:-unknown}"
+        echo "OpenMW saved settings.cfg successfully."
+        echo "Restarting OpenMW now..."
+        echo "============================================================"
+        echo
+
+        sync
+        sleep 1
+        continue
+    fi
+
+    echo "TSP resolution launcher: normal game exit"
+    break
+done
+
+cleanup_helper
+CONTROL_HELPER_PID=""
+
+# TSP_PADCAP_V1 -- keep the last helper log rather than throwing it away.
+cp -f "$CONTROL_HELPER_LOG" "$GAMEDIR/tsp_helper_last.log" 2>/dev/null || true
+rm -f "$CONTROL_HELPER_LOG" 2>/dev/null || true
+type tsp_padcap_stop >/dev/null 2>&1 && tsp_padcap_stop
+
+pm_gptokeyb_finish
+pm_finish
+
+type tsp_govpin_stop >/dev/null 2>&1 && tsp_govpin_stop
+type tsp_muos_idle_restore >/dev/null 2>&1 && tsp_muos_idle_restore
+type tsp_zram_release >/dev/null 2>&1 && tsp_zram_release
+type tsp_swap_release >/dev/null 2>&1 && tsp_swap_release
+
+exit "$OPENMW_EXIT_CODE"
+
+# TSP_V16_GL4ES_TEXTURE_WATERFIX

@@ -1,0 +1,8 @@
+0624f8a7849d5c9337066f8fef2b640ad6124fe1ba94769ec6a69046bde516c9  bin/openmw-0.51
+1178cd92d93550157363b53deba494a2052da2cf590a1e11a826b7fc8c9bda02  lib/libGL.so.1
+2b00e31f77c2cc21cc1cea26966127c980c1b31b80722c37fa17d330f6c9cfd6  tsp_openmw_controls
+--- markers present in the deployed build ---
+TSP_MAXCOLORATTACH                       libGL=1 bin=0
+TSP_FBO_ALWAYS_REATTACH_20260824         libGL=1 bin=0
+TSP_RTT_INIT_TEXTURE_V55                 libGL=0 bin=2
+TSP_DRAWCOUNT_V4                         libGL=0 bin=0

@@ -1,0 +1,223 @@
+#ifndef TSP_PROF_H
+#define TSP_PROF_H
+
+/*
+ * tspprof.h - self-contained frame profiler for the TrimUI OpenMW port
+ *
+ * ===========================================================================
+ * WHY A HEADER
+ * ===========================================================================
+ *
+ * Earlier attempts inserted a timer struct directly into character.cpp and
+ * actors.cpp. That failed three separate ways:
+ *
+ *   - the struct landed below its first use, so the file would not compile
+ *   - moving it with a regex cut out a closing brace and mangled the file
+ *   - six live timers per frame cost more than the thing being measured
+ *
+ * Everything now lives here, header-only, with no dependency on where it is
+ * included. A file needs one #include and one line per measurement point.
+ * Nothing else in the translation unit is touched, so a bad edit cannot
+ * corrupt the surrounding code.
+ *
+ * ===========================================================================
+ * DESIGN
+ * ===========================================================================
+ *
+ * Ring buffer, not thresholds. Every frame is recorded into a fixed array
+ * and the last TSP_RING_FRAMES are written out at exit. Previous attempts
+ * used a threshold and wrote to disk on the spot, which meant a threshold
+ * guessed too high logged nothing and one guessed too low distorted the
+ * measurement. A ring records whatever happened, including the frames either
+ * side of a spike, and does no I/O during play.
+ *
+ * Cost per measurement point is two clock_gettime calls and a float add.
+ *
+ * ===========================================================================
+ * WHAT WE ALREADY KNOW
+ * ===========================================================================
+ *
+ *   GPU              idle - glFinish before swap returns in 0.83ms
+ *   disk             no meaningful reads during the stall
+ *   submission       draws and verts within 5% of a normal frame
+ *   ActiveSpells     21ms, once, at the moment an effect is applied
+ *   forced anim      10.77ms per forced refreshCurrentAnims, ~4 per 2800
+ *   Actors::update   12-26ms sustained for ~4.4s during a paralysis
+ *
+ * The one-time costs total ~32ms and do not explain a sustained stall. This
+ * is aimed at the sustained portion: which slot accumulates time across the
+ * frames where total_ms is high.
+ *
+ * ===========================================================================
+ * USAGE
+ * ===========================================================================
+ *
+ *   #include "path/to/tspprof.h"
+ *
+ *   void SomeClass::someFunction()
+ *   {
+ *       TSP_SCOPE(TSP_SLOT_MECH);     // times this scope into a slot
+ *       ...
+ *   }
+ *
+ * Frame boundary, once per frame in the main loop:
+ *
+ *   TspProf::endFrame();
+ *
+ * Dump at exit - place one of these in a function that returns at shutdown:
+ *
+ *   TspProf::dumpAtExit();
+ *
+ * Enable at runtime:
+ *
+ *   export OPENMW_TSP_RING=/mnt/SDCARD/tsp_ring.txt
+ *
+ * With the variable unset the ring still fills but nothing is written, and
+ * the cost stays at a few clock reads per frame.
+ */
+
+#include <cstdio>
+#include <cstdlib>
+#include <ctime>
+
+namespace TspProf
+{
+    enum Slot
+    {
+        TSP_SLOT_MECH = 0, // Actors::update - the whole mechanics pass
+        TSP_SLOT_CHAR,     // CharacterController::update
+        TSP_SLOT_ANIM,     // refreshCurrentAnims
+        TSP_SLOT_SPELL,    // ActiveSpells::update
+        TSP_SLOT_PHYS,     // physics simulation
+        TSP_SLOT_AI,       // AiSequence::execute
+        TSP_SLOT_LUA,      // LuaManager::synchronizedUpdate
+        TSP_SLOT_WORLD,    // World::update
+        TSP_SLOT_GUI,      // WindowManager::update
+        TSP_SLOT_EVENT,    // Viewer::eventTraversal
+        TSP_SLOT_UPDATET,  // Viewer::updateTraversal
+        TSP_SLOT_RENDER,   // Viewer::renderingTraversals - cull + draw
+        TSP_SLOT_SOUND,    // SoundManager::update
+        TSP_SLOT_COUNT
+    };
+
+    static const int TSP_RING_FRAMES = 900;
+
+    struct Frame
+    {
+        double total;
+        double slot[TSP_SLOT_COUNT];
+        int calls[TSP_SLOT_COUNT];
+    };
+
+    inline double nowMs()
+    {
+        struct timespec ts;
+        clock_gettime(CLOCK_MONOTONIC, &ts);
+        return (double)ts.tv_sec * 1000.0 + (double)ts.tv_nsec / 1000000.0;
+    }
+
+    inline Frame* ring()
+    {
+        static Frame buf[TSP_RING_FRAMES];
+        return buf;
+    }
+
+    inline Frame& current()
+    {
+        static Frame cur;
+        return cur;
+    }
+
+    inline unsigned long& frameNo()
+    {
+        static unsigned long n = 0;
+        return n;
+    }
+
+    inline double& lastFrameStart()
+    {
+        static double t = nowMs();
+        return t;
+    }
+
+    inline void add(int slot, double ms)
+    {
+        if (slot < 0 || slot >= TSP_SLOT_COUNT)
+            return;
+        current().slot[slot] += ms;
+        current().calls[slot] += 1;
+    }
+
+    /* call once per frame from the main loop */
+    inline void endFrame()
+    {
+        double now = nowMs();
+        Frame& c = current();
+        c.total = now - lastFrameStart();
+        lastFrameStart() = now;
+
+        unsigned long n = frameNo()++;
+        ring()[n % TSP_RING_FRAMES] = c;
+
+        c.total = 0.0;
+        for (int i = 0; i < TSP_SLOT_COUNT; i++)
+        {
+            c.slot[i] = 0.0;
+            c.calls[i] = 0;
+        }
+    }
+
+    inline void dump()
+    {
+        const char* path = getenv("OPENMW_TSP_RING");
+        if (!path || !path[0])
+            return;
+        FILE* f = fopen(path, "w");
+        if (!f)
+            return;
+
+        unsigned long n = frameNo();
+        unsigned long first = (n > (unsigned long)TSP_RING_FRAMES)
+            ? n - TSP_RING_FRAMES : 0;
+
+        fprintf(f, "# tspprof - last %lu of %lu frames\n", n - first, n);
+        fprintf(f, "# frame total mech char anim spell phys ai lua world gui event updt render sound\n");
+        for (unsigned long i = first; i < n; i++)
+        {
+            const Frame& s = ring()[i % TSP_RING_FRAMES];
+            fprintf(f, "%lu %.2f", i, s.total);
+            for (int k = 0; k < TSP_SLOT_COUNT; k++)
+                fprintf(f, " %.2f", s.slot[k]);
+            fprintf(f, " |");
+            for (int k = 0; k < TSP_SLOT_COUNT; k++)
+                fprintf(f, " %d", s.calls[k]);
+            fputc('\n', f);
+        }
+        fclose(f);
+    }
+
+    /* object whose destructor dumps - declare one at shutdown scope */
+    struct DumpAtExit
+    {
+        ~DumpAtExit() { dump(); }
+    };
+
+    inline void dumpAtExit()
+    {
+        static DumpAtExit d;
+        (void)d;
+    }
+
+    /* RAII scope timer */
+    struct Scope
+    {
+        int slot;
+        double t0;
+        explicit Scope(int s) : slot(s), t0(nowMs()) {}
+        ~Scope() { add(slot, nowMs() - t0); }
+    };
+}
+
+#define TSP_SCOPE(slot) TspProf::Scope tspScope##__LINE__(slot)
+
+#endif

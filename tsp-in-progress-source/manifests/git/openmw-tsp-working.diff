@@ -1,0 +1,154 @@
+diff --git a/apps/openmw/mwinput/controllermanager.cpp b/apps/openmw/mwinput/controllermanager.cpp
+index bccb7b25..47729441 100644
+--- a/apps/openmw/mwinput/controllermanager.cpp
++++ b/apps/openmw/mwinput/controllermanager.cpp
+@@ -222,16 +222,33 @@ namespace MWInput
+     void ControllerManager::update(float dt)
+     {
+         // TSP_CHORD_051_V43 -- belt and braces: if we think MENU is held but SDL
+-        // says the physical button is up, we missed a release. Mark it
+-        // chord-consumed so a late release cannot also toggle the mouse.
++        // says the physical button is up, we missed a release.
++        //
++        // TSP_MENU_TAP_RACE_051_V65 -- this used to fire on ORDINARY TAPS. SDL
++        // button state can already read up in the update() that runs between the
++        // press event and the release event, so a tap tripped the watchdog, which
++        // asserted chord-consumed, and the real release then returned early without
++        // running the bare-tap branch. Every MENU press in the .21 log shows the
++        // pair "stuck-armed" then "release action=chord-consumed". That
++        // is why MENU could not summon text in barter/inventory except by mashing.
++        //
++        // Require several CONSECUTIVE up frames -- a genuinely missed release
++        // stays up, a tap does not -- and do not claim a chord that never fired;
++        // a real chord already sets mTspChordConsumed itself.
++        static int tspMenuUpFrames = 0;
+         if (mTspMenuHeld && !isButtonPressed(SDL_CONTROLLER_BUTTON_GUIDE))
++            ++tspMenuUpFrames;
++        else
++            tspMenuUpFrames = 0;
++        if (mTspMenuHeld && tspMenuUpFrames >= 10)
+         {
+-            Log(Debug::Warning) << "TSP_CHORD_051_V43 menu=stuck-armed action=cleared";
++            Log(Debug::Warning) << "TSP_CHORD_051_V43 menu=stuck-armed action=cleared"
++                                << " frames=" << tspMenuUpFrames;
+             mTspMenuHeld = false;
+-            mTspChordConsumed = true;
+             mTspChordStickDir = 0;
+             mTspChordLtLatched = false;
+             mTspChordRtLatched = false;
++            tspMenuUpFrames = 0;
+         }
+ 
+         // TSP_CHORD_051_V42 -- right stick / triggers while MENU is held.
+diff --git a/apps/openmw/mwinput/inputmanagerimp.cpp b/apps/openmw/mwinput/inputmanagerimp.cpp
+index 20c2e6ff..6833b5ce 100644
+--- a/apps/openmw/mwinput/inputmanagerimp.cpp
++++ b/apps/openmw/mwinput/inputmanagerimp.cpp
+@@ -24,6 +24,7 @@
+ #include <algorithm>
+ #include <string>
+ #include <MyGUI_Gui.h>
++#include <MyGUI_KeyCode.h>
+ #include <MyGUI_RenderManager.h>
+ #include <MyGUI_TextBox.h>
+ #include <cstdio>
+@@ -146,6 +147,39 @@ namespace MWInput
+         // context-sensitive trigger instead of stealing game/menu controls.
+         const bool tspTextEntryActive = SDL_IsTextInputActive() == SDL_TRUE;
+ 
++        // TSP_TEXT_INJECT_051_V64 -- the helper hands us the chosen character in a
++        // file instead of relying on its synthetic uinput keystroke being
++        // translated by SDL. That translation needs the kernel console keymap
++        // and is absent on some TrimUI OS images: the helper emits a correct
++        // Shift+A and no character ever appears. Injecting into MyGUI here
++        // removes the dependency on the host OS entirely.
++        {
++            if (std::FILE* tspInjectFile
++                = std::fopen("/tmp/openmw-tsp-text-inject", "r"))
++            {
++                char tspInjectBuf[64] = {};
++                const std::size_t tspInjectCount
++                    = std::fread(tspInjectBuf, 1, sizeof(tspInjectBuf) - 1, tspInjectFile);
++                std::fclose(tspInjectFile);
++                std::remove("/tmp/openmw-tsp-text-inject");
++                for (std::size_t tspI = 0; tspI < tspInjectCount; ++tspI)
++                {
++                    const unsigned char tspCh
++                        = static_cast<unsigned char>(tspInjectBuf[tspI]);
++                    if (tspCh == 8)
++                        windowManager->injectKeyPress(MyGUI::KeyCode::Backspace, 0, false);
++                    else if (tspCh == 13 || tspCh == 10)
++                        windowManager->injectKeyPress(MyGUI::KeyCode::Return, 0, false);
++                    else if (tspCh >= 32 && tspCh < 127)
++                        windowManager->injectKeyPress(MyGUI::KeyCode::None, tspCh, false);
++                    else
++                        continue;
++                    std::fprintf(stderr, "TSP_TEXT_INJECT_051_V64 injected=%u\n", tspCh);
++                }
++                std::fflush(stderr);
++            }
++        }
++
+         // TSP_EXPLICIT_UI_STATE_051_V58
+         // B from helper TEXT writes this file before Escape. Keep it asserted
+         // until SDL itself reports that the text field genuinely ended. While
+diff --git a/apps/openmw/mwstate/statemanagerimp.cpp b/apps/openmw/mwstate/statemanagerimp.cpp
+index 26b4a8b6..d3f21345 100644
+--- a/apps/openmw/mwstate/statemanagerimp.cpp
++++ b/apps/openmw/mwstate/statemanagerimp.cpp
+@@ -1,3 +1,4 @@
++#include <cstdio>
+ #include <malloc.h>
+ #include <fstream>
+ #include <string>
+@@ -908,6 +909,26 @@ static long long tspMallocInuseKb()
+ #endif
+ }
+ 
++
++/* TSP_HEAPTRIM_V1: resident-set reader that needs no allocator helper, so this
++   block does not depend on anything else in this file staying where it is. */
++namespace
++{
++    long tspHeapTrimRssKb()
++    {
++        long rssPages = 0;
++        FILE* f = std::fopen("/proc/self/statm", "r");
++        if (f == nullptr)
++            return -1;
++        long totalPages = 0;
++        const int got = std::fscanf(f, "%ld %ld", &totalPages, &rssPages);
++        std::fclose(f);
++        if (got != 2)
++            return -1;
++        return rssPages * (static_cast<long>(::sysconf(_SC_PAGESIZE)) / 1024);
++    }
++}
++
+ void MWState::StateManager::loadGame(const Character* character, const std::filesystem::path& filepath)
+ {
+     try
+@@ -1229,6 +1250,23 @@ void MWState::StateManager::loadGame(const Character* character, const std::file
+         std::string error = "#{OMWEngine:LoadingFailed}: " + std::string(e.what());
+         printSavegameFormatError(e.what(), error);
+     }
++
++    /* TSP_HEAPTRIM_V1: see tsp_heappatch.py. The load burst is freed but not
++       returned - glibc trims only the top of brk. This hands the interior free
++       pages back. Runs under the loading screen, so the cost is not a hitch.
++       TSP_NO_HEAPTRIM=1 disables it. */
++#if defined(__GLIBC__)
++    if (std::getenv("TSP_NO_HEAPTRIM") == nullptr)
++    {
++        const long tspTrimRssBefore = tspHeapTrimRssKb();
++        const int tspTrimRc = malloc_trim(0);
++        const long tspTrimRssAfter = tspHeapTrimRssKb();
++        Log(Debug::Warning) << "TSP_HEAPTRIM_V1 rc=" << tspTrimRc
++                            << " rss_before_kb=" << tspTrimRssBefore
++                            << " rss_after_kb=" << tspTrimRssAfter
++                            << " returned_kb=" << (tspTrimRssBefore - tspTrimRssAfter);
++    }
++#endif
+ }
+ 
+ void MWState::StateManager::printSavegameFormatError(

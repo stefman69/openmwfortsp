@@ -1,0 +1,40 @@
+label=gl4es-tsps-current
+container=openmw_builder
+source=/root/gl4es-tsps
+captured=2026-09-22T12:15:21-07:00
+
+===== HEAD =====
+39f8e0b63448fb82e3c1eefe107286e91fe8fcb7
+
+===== BRANCH =====
+master
+
+===== STATUS INCLUDING UNTRACKED =====
+ M src/gl/buffers.c
+ M src/gl/program.c
+ M src/gl/shader.c
+ M src/glx/hardext.c
+?? src/gl/buffers.c.before-orphan-20260913-084609
+?? src/gl/buffers.c.before-orphan2-20260913-092054
+?? src/gl/buffers.c.before-orphan3-20260913-101806
+?? src/gl/buffers.c.before-orphan4-20260913-104214
+?? src/gl/buffers.c.before-orphan5-20260913-121214
+?? src/gl/buffers.h.before-orphan-20260913-084609
+?? src/gl/buffers.h.before-orphan2-20260913-092054
+?? src/gl/buffers.h.before-orphan3-20260913-101806
+?? src/gl/fpe.c.before-orphan-20260913-084609
+?? src/gl/fpe.c.before-orphan2-20260913-092054
+?? src/gl/fpe.c.before-orphan3-20260913-101806
+?? src/gl/listdraw.c.before-orphan3-20260913-101806
+?? src/gl/program.c.before-fillguard-20260908-042031
+?? src/gl/program.c.before-prgcache-20260908-014022
+?? src/gl/program.c.before-quietlog-20260909-050258
+?? src/gl/program.c.before-shcache-20260908-025213
+?? src/gl/shader.c.before-quietlog-20260909-050258
+?? src/gl/shader.c.before-shcache-20260908-025213
+?? src/glx/hardext.c.before-extdump-20260909-051031
+?? src/glx/hardext.c.before-extdump-20260909-051121
+
+===== RECENT COMMITS =====
+39f8e0b TSP: maxcolorattach RTT colour-attachment fix, always-reattach, instrument hooks
+81547d9 Merge pull request #513 from FWGS/master

@@ -1,0 +1,44 @@
+label=osg-source-1
+container=openmw_builder
+source=/root/osg
+captured=2026-09-22T12:15:24-07:00
+
+===== HEAD =====
+638f0a1e73687633fd99bf110d04226e78ff69c6
+
+===== BRANCH =====
+3.6
+
+===== STATUS INCLUDING UNTRACKED =====
+?? build/include/OpenThreads/Config
+?? build/include/OpenThreads/Version
+?? build/include/osg/Config
+?? build/include/osg/GL
+?? build/include/osg/Version
+
+===== RECENT COMMITS =====
+638f0a1e7 Merge pull request #47 from Duron27-org/GLES_3
+a7bc57f99 Add support for GLES3 dynamic loading
+8aa8d9174 Merge pull request #43 from a17r/cmake
+76345671a FindRSVG.cmake: Fix CMake warnings
+89bbe4c05 FindPoppler-glib.cmake: Fix CMake warnings
+952d59e8d FindGTA.cmake: Fix CMake warnings
+640cf8537 Cleanup superfluous overarching NOT ANDROID conditional
+170dae51d Merge pull request #42 from a17r/gnuinstalldirs
+ff1a0946b Also propagate relative include dir to pkgconfig files
+05e38b135 Fully embrace GNUInstallDirs
+747fba94e Merge pull request #39 from Capostrophic/unused
+a9de15657 Merge pull request #40 from a17r/cmake
+2b7b5ef99 Merge pull request #37 from kartoffels123/3.6
+8b255c141 added definition
+41a574af1 Cleanup legacy CMake endif() conditions
+ff48f625f Build examples only if NOT ANDROID
+ce942ab2f Cleanup legacy CMake else() conditions
+06d1cff0e Cleanup FATAL_ERROR from cmake_minimum_required
+ae5597d1f Check for POLICY CMP0069 directly instead of cmake_policy()
+fa7d0d45e Fix unused parameter warnings in GraphicsObjectManager
+081217588 Merge pull request #38 from a17r/cmake
+21449e2aa small warning message update.
+b5fc56baf Use more GNUInstalldirs (CMAKE_INSTALL_DOCDIR)
+b203287da FindCOLLADA.cmake: Fix ELSEIF() w/o argument warning in CMake-4.1.0
+8b723fa17 Fix DDS file origin handling in ReaderWriterDDS

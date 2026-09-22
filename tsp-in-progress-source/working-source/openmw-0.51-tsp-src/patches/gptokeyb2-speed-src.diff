@@ -1,0 +1,67 @@
+diff --git a/src/config.c b/src/config.c
+index 70cff1f..4393bc6 100644
+--- a/src/config.c
++++ b/src/config.c
+@@ -133,6 +133,8 @@ const char *act_names[] = {
+ const char *spc_names[] = {
+     "(none)",
+     "mouse_slow",
++    "mouse_speed_down",
++    "mouse_speed_up",
+     "add_letter",
+     "remove_letter",
+     "next_letter",
+diff --git a/src/gptokeyb2.h b/src/gptokeyb2.h
+index 0964c40..a414ed6 100644
+--- a/src/gptokeyb2.h
++++ b/src/gptokeyb2.h
+@@ -192,6 +192,8 @@ enum
+     SPC_NONE,
+     SPC_MOUSE_SLOW,
+ 
++    SPC_MOUSE_SPEED_DOWN,
++    SPC_MOUSE_SPEED_UP,
+     SPC_ADD_LETTER,
+     SPC_REM_LETTER,
+ 
+diff --git a/src/state.c b/src/state.c
+index bb8d399..3c2e53d 100644
+--- a/src/state.c
++++ b/src/state.c
+@@ -687,6 +687,36 @@ void update_button(int btn, bool pressed)
+         {   // this way we can always clear the mouse_slow flag if the state changes.
+             current_state.mouse_slow |= btn_mask;
+         }
++    else if (button->action == ACT_SPECIAL &&
++             (button->special == SPC_MOUSE_SPEED_DOWN ||
++              button->special == SPC_MOUSE_SPEED_UP))
++    {
++        static const int mouse_speed_scale[5] = { 2, 4, 6, 8, 10 };
++        static int mouse_speed_level = 2;
++
++        if (button->special == SPC_MOUSE_SPEED_DOWN)
++        {
++            if (mouse_speed_level > 0)
++                mouse_speed_level--;
++        }
++        else
++        {
++            if (mouse_speed_level < 4)
++                mouse_speed_level++;
++        }
++
++        current_state.deadzone_scale =
++            mouse_speed_scale[mouse_speed_level];
++
++        printf(
++            "MOUSE_SPEED level=%d/5 percent=%d scale=%d\n",
++            mouse_speed_level + 1,
++            (mouse_speed_level + 1) * 20,
++            current_state.deadzone_scale
++        );
++        fflush(stdout);
++    }
++
+         else if (button->action == ACT_SPECIAL && button->special >= SPC_ADD_LETTER)
+         {   // special controls
+             printf("%d -> %d -> %d: %d\n", btn, button->action, button->special,(int)input_active());
