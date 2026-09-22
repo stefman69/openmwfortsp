@@ -11,7 +11,7 @@ When I saw that someone had made a portmaster port for Morrowind I was really ex
 
 2. You will need to copy all files from your Morrowind game folder to Data/ports/openmw/Data
 
-3. The OpenMW_Manager must be run in order to install all compatibility files. It will take up about 1.5 gb on the internal drive and take about an hour to setup.
+3. The OpenMW_Manager must be run in order to install all compatibility files. It will take up about 1.5 gb of storage and take about an hour to setup.
 
 -Open the OpenMW_Manager.sh in your ports folder (you may need to refresh your roms using the menu button)
 -After it loads select the Setup Storage option
