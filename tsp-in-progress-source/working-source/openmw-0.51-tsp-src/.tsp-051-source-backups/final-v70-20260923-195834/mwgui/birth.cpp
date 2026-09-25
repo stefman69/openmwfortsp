@@ -42,20 +42,12 @@ namespace MWGui
         center();
 
         getWidget(mSpellArea, "SpellArea");
-        // TSP_BIRTH_DIRECT_SCROLL_051_V72
-        mControllerScrollWidget = mSpellArea;
-        mSpellArea->setUserString("TSPDirectControllerScroll", "1");
 
         // TSP_BIRTHSIGN_UI_051_V67
         // The global TSP right-stick scroll path only acts on the active
         // window's controller scroll widget. BirthDialog never registered
         // its ScrollView, so RIGHTY had nothing to target.
         mControllerScrollWidget = mSpellArea;
-
-        // TSP_BIRTHSIGN_LOWER_SCROLL_051_V70
-        // D-pad remains bound to the upper BirthsignList. RS is
-        // explicitly tagged to control the lower SpellArea ScrollView.
-        mSpellArea->setUserString("TSPDirectControllerScroll", "1");
 
         getWidget(mBirthImage, "BirthsignImage");
 
@@ -285,10 +277,7 @@ namespace MWGui
                         = Settings::gui().mFontSize.get() > 18
                         ? 18
                         : Settings::gui().mFontSize.get();
-                    spellWidget->setNameFontHeight(16);
-
-                    // TSP_BIRTH_NAME_FONT_051_V72
-                    spellWidget->tspV72SetNameFontHeight(18);
+                    spellWidget->setNameFontHeight(tspBirthNameFontHeight);
 
                     mSpellItems.push_back(spellWidget);
                     coord.top += lineHeight;

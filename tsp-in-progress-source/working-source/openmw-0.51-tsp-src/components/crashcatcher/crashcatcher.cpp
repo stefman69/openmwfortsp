@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <cstring>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <optional>
@@ -8,6 +9,7 @@
 #include <errno.h>
 #include <limits.h>
 #include <pthread.h>
+#include <signal.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -64,7 +66,19 @@ static struct
     int signum;
     pid_t pid;
     std::optional<siginfo_t> siginfo;
+
+    // TSP_NATIVE_CRASH_CONTEXT_V1
+    // Captured directly from the kernel's signal ucontext.
+    // This does not require gdb/lldb.
+    std::uintptr_t pc;
+    std::uintptr_t lr;
+    std::uintptr_t sp;
+    std::uintptr_t pstate;
 } crash_info;
+
+// TSP_SOFT_SIGILL_BYPASS_V1
+static bool tspSoftSigillBypassEnabled = false;
+static volatile int tspSoftSigillBypassCount = 0;
 
 namespace
 {
@@ -256,6 +270,109 @@ quit
         static constexpr char sCommandTemplate[] = "lldb --attach-pid %d --batch --source %s";
     };
 
+    void tspPrintFaultMapping(
+        FILE* output,
+        pid_t pid,
+        std::uintptr_t pc)
+    {
+        fprintf(
+            output,
+            "TSP_NATIVE_CRASH_CONTEXT_V1 "
+            "fault_mapping_lookup pid=%d pc=0x%llx\n",
+            static_cast<int>(pid),
+            static_cast<unsigned long long>(pc));
+
+        if (pid <= 0 || pc == 0)
+        {
+            fprintf(
+                output,
+                "TSP_NATIVE_CRASH_CONTEXT_V1 "
+                "fault_mapping=UNAVAILABLE\n");
+            return;
+        }
+
+        char mapsPath[64];
+
+        snprintf(
+            mapsPath,
+            sizeof(mapsPath),
+            "/proc/%d/maps",
+            static_cast<int>(pid));
+
+        FILE* maps = fopen(mapsPath, "r");
+
+        if (maps == nullptr)
+        {
+            fprintf(
+                output,
+                "TSP_NATIVE_CRASH_CONTEXT_V1 "
+                "fault_mapping_open_failed errno=%d %s\n",
+                errno,
+                strerror(errno));
+            return;
+        }
+
+        char line[2048];
+
+        while (fgets(line, sizeof(line), maps) != nullptr)
+        {
+            unsigned long long start = 0;
+            unsigned long long end = 0;
+            unsigned long long fileOffset = 0;
+            char perms[16] = {};
+
+            const int fields = sscanf(
+                line,
+                "%llx-%llx %15s %llx",
+                &start,
+                &end,
+                perms,
+                &fileOffset);
+
+            if (fields != 4)
+                continue;
+
+            const unsigned long long pcValue
+                = static_cast<unsigned long long>(pc);
+
+            if (pcValue < start || pcValue >= end)
+                continue;
+
+            const unsigned long long objectOffset
+                = fileOffset + (pcValue - start);
+
+            fprintf(
+                output,
+                "TSP_NATIVE_CRASH_CONTEXT_V1 "
+                "fault_mapping=%s",
+                line);
+
+            fprintf(
+                output,
+                "TSP_NATIVE_CRASH_CONTEXT_V1 "
+                "pc_file_offset=0x%llx "
+                "map_start=0x%llx "
+                "map_end=0x%llx "
+                "map_file_offset=0x%llx "
+                "perms=%s\n",
+                objectOffset,
+                start,
+                end,
+                fileOffset,
+                perms);
+
+            fclose(maps);
+            return;
+        }
+
+        fclose(maps);
+
+        fprintf(
+            output,
+            "TSP_NATIVE_CRASH_CONTEXT_V1 "
+            "fault_mapping=NOT_FOUND\n");
+    }
+
     void printProcessInfo(pid_t pid)
     {
         if (printDebuggerInfo<Gdb>(pid))
@@ -295,12 +412,65 @@ static size_t safe_write(int fd, const void* buf, size_t len)
     return ret;
 }
 
-static void crash_catcher(int signum, siginfo_t* siginfo, void* /*context*/)
+static void crash_catcher(int signum, siginfo_t* siginfo, void* context)
 {
     /* Make sure the effective uid is the real uid */
     if (getuid() != geteuid())
     {
         raise(signum);
+        return;
+    }
+
+    // TSP_SOFT_SIGILL_BYPASS_V1
+    if (tspSoftSigillBypassEnabled
+        && signum == SIGILL
+        && siginfo != nullptr
+        && siginfo->si_code == SI_TKILL
+        && siginfo->si_pid == getpid()
+        && tspSoftSigillBypassCount == 0)
+    {
+        tspSoftSigillBypassCount = 1;
+
+        static const char softSigillMessage[]
+            = "\n"
+              "TSP_SOFT_SIGILL_BYPASS_V1 "
+              "caught=SIGILL "
+              "reason=SI_TKILL-self-generated "
+              "action=ignored-once "
+              "real-cpu-SIGILL-remains-fatal\n";
+
+        safe_write(
+            STDERR_FILENO,
+            softSigillMessage,
+            sizeof(softSigillMessage) - 1);
+
+        // SA_RESETHAND reset us to SIG_DFL on entry.
+        // Restore the normal OpenMW crash handler before continuing.
+        struct sigaction rearm{};
+
+        rearm.sa_sigaction = crash_catcher;
+
+        rearm.sa_flags
+            = SA_RESETHAND
+            | SA_NODEFER
+            | SA_SIGINFO
+            | SA_ONSTACK;
+
+        if (sigemptyset(&rearm.sa_mask) == -1
+            || sigaction(SIGILL, &rearm, nullptr) == -1)
+        {
+            static const char rearmFailure[]
+                = "TSP_SOFT_SIGILL_BYPASS_V1 "
+                  "FATAL reason=failed-to-rearm-SIGILL-handler\n";
+
+            safe_write(
+                STDERR_FILENO,
+                rearmFailure,
+                sizeof(rearmFailure) - 1);
+
+            _exit(190);
+        }
+
         return;
     }
 
@@ -319,6 +489,33 @@ static void crash_catcher(int signum, siginfo_t* siginfo, void* /*context*/)
         crash_info.siginfo = std::nullopt;
     else
         crash_info.siginfo = *siginfo;
+
+    // TSP_NATIVE_CRASH_CONTEXT_V1
+    crash_info.pc = 0;
+    crash_info.lr = 0;
+    crash_info.sp = 0;
+    crash_info.pstate = 0;
+
+#if defined(__linux__) && defined(__aarch64__)
+    if (context != nullptr)
+    {
+        const auto* uc = static_cast<const ucontext_t*>(context);
+
+        crash_info.pc
+            = static_cast<std::uintptr_t>(uc->uc_mcontext.pc);
+
+        crash_info.lr
+            = static_cast<std::uintptr_t>(
+                uc->uc_mcontext.regs[30]);
+
+        crash_info.sp
+            = static_cast<std::uintptr_t>(uc->uc_mcontext.sp);
+
+        crash_info.pstate
+            = static_cast<std::uintptr_t>(
+                uc->uc_mcontext.pstate);
+    }
+#endif
 
     const pid_t dbgPid = fork();
     /* Fork off to start a crash handler */
@@ -396,7 +593,51 @@ static void crash_catcher(int signum, siginfo_t* siginfo, void* /*context*/)
     }
     fprintf(stderr, "%s (signal %i)\n", sigdesc, crash_info.signum);
     if (crash_info.siginfo.has_value())
-        fprintf(stderr, "Address: %p\n", crash_info.siginfo->si_addr);
+    {
+        fprintf(
+            stderr,
+            "Address: %p\n",
+            crash_info.siginfo->si_addr);
+
+        fprintf(
+            stderr,
+            "TSP_NATIVE_CRASH_CONTEXT_V1 "
+            "si_code=%d si_pid=%d si_uid=%u\n",
+            crash_info.siginfo->si_code,
+            static_cast<int>(crash_info.siginfo->si_pid),
+            static_cast<unsigned int>(crash_info.siginfo->si_uid));
+    }
+
+    fprintf(
+        stderr,
+        "TSP_NATIVE_CRASH_CONTEXT_V1 "
+        "signal=%d description=%s "
+        "pc=0x%llx lr=0x%llx "
+        "sp=0x%llx pstate=0x%llx\n",
+        crash_info.signum,
+        sigdesc,
+        static_cast<unsigned long long>(crash_info.pc),
+        static_cast<unsigned long long>(crash_info.lr),
+        static_cast<unsigned long long>(crash_info.sp),
+        static_cast<unsigned long long>(crash_info.pstate));
+
+    tspPrintFaultMapping(
+        stderr,
+        crash_info.pid,
+        crash_info.pc);
+
+    fprintf(
+        stderr,
+        "TSP_NATIVE_CRASH_CONTEXT_V1 "
+        "lr_mapping_follow lr=0x%llx\n",
+        static_cast<unsigned long long>(crash_info.lr));
+
+    tspPrintFaultMapping(
+        stderr,
+        crash_info.pid,
+        crash_info.lr);
+
+    fflush(stderr);
     fputc('\n', stderr);
 
     /* Create crash log file and redirect shell output to it */
@@ -413,7 +654,46 @@ static void crash_catcher(int signum, siginfo_t* siginfo, void* /*context*/)
         "%s (signal %i)\n",
         sigdesc, crash_info.signum);
     if (crash_info.siginfo.has_value())
-        printf("Address: %p\n", crash_info.siginfo->si_addr);
+    {
+        printf(
+            "Address: %p\n",
+            crash_info.siginfo->si_addr);
+
+        printf(
+            "TSP_NATIVE_CRASH_CONTEXT_V1 "
+            "si_code=%d si_pid=%d si_uid=%u\n",
+            crash_info.siginfo->si_code,
+            static_cast<int>(crash_info.siginfo->si_pid),
+            static_cast<unsigned int>(crash_info.siginfo->si_uid));
+    }
+
+    printf(
+        "TSP_NATIVE_CRASH_CONTEXT_V1 "
+        "signal=%d description=%s "
+        "pc=0x%llx lr=0x%llx "
+        "sp=0x%llx pstate=0x%llx\n",
+        crash_info.signum,
+        sigdesc,
+        static_cast<unsigned long long>(crash_info.pc),
+        static_cast<unsigned long long>(crash_info.lr),
+        static_cast<unsigned long long>(crash_info.sp),
+        static_cast<unsigned long long>(crash_info.pstate));
+
+    tspPrintFaultMapping(
+        stdout,
+        crash_info.pid,
+        crash_info.pc);
+
+    printf(
+        "TSP_NATIVE_CRASH_CONTEXT_V1 "
+        "lr_mapping_follow lr=0x%llx\n",
+        static_cast<unsigned long long>(crash_info.lr));
+
+    tspPrintFaultMapping(
+        stdout,
+        crash_info.pid,
+        crash_info.lr);
+
     fputc('\n', stdout);
     fflush(stdout);
 
@@ -589,8 +869,29 @@ void crashCatcherInstall(int argc, char** argv, const std::filesystem::path& cra
     if (isDebuggerPresent())
         return;
 
+    const char* tspSoftSigill
+        = getenv("TSP_SOFT_SIGILL_BYPASS");
+
+    tspSoftSigillBypassEnabled
+        = tspSoftSigill != nullptr
+        && tspSoftSigill[0] == '1'
+        && tspSoftSigill[1] == '\0';
+
     if (crashCatcherInstallHandlers(argv))
+    {
         Log(Debug::Info) << "Crash handler installed";
+        Log(Debug::Warning)
+            << "TSP_NATIVE_CRASH_CONTEXT_V1 armed "
+            << "fields=signal,si_code,pc,lr,sp,pstate,"
+               "fault_mapping,pc_file_offset";
+
+        Log(Debug::Warning)
+            << "TSP_SOFT_SIGILL_BYPASS_V1 "
+            << "armed=" << (tspSoftSigillBypassEnabled ? 1 : 0)
+            << " match=SIGILL+SI_TKILL+self "
+            << "limit=1 "
+            << "hardware_SIGILL=fatal";
+    }
     else
         Log(Debug::Warning) << "Installing crash handler failed";
 }

@@ -77,10 +77,6 @@ namespace MWGui
 
             void setSkillId(ESM::RefId skillId);
             void setSkillValue(const SkillValue& value);
-            void tspV72SetFontHeight(int height);
-
-            // TSP_CHARGEN_VALUE_FONT_051_V70
-            void setNameFontHeight(int height);
 
             ESM::RefId getSkillId() const { return mSkillId; }
             const SkillValue& getSkillValue() const { return mValue; }
@@ -122,10 +118,6 @@ namespace MWGui
 
             void setAttributeId(ESM::RefId attributeId);
             void setAttributeValue(const AttributeValue& value);
-            void tspV72SetFontHeight(int height);
-
-            // TSP_CHARGEN_VALUE_FONT_051_V70
-            void setNameFontHeight(int height);
 
             ESM::RefId getAttributeId() const { return mId; }
             const AttributeValue& getAttributeValue() const { return mValue; }
@@ -168,7 +160,6 @@ namespace MWGui
             MWSpell();
 
             void setSpellId(const ESM::RefId& id);
-            void tspV72SetNameFontHeight(int height);
 
             // TSP_BIRTHSIGN_NAME_FONT_051_V67
             // Per-instance spell-name sizing for compact chargen screens.

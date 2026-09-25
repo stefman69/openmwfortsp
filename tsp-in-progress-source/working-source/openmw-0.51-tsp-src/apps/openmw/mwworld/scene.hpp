@@ -124,21 +124,6 @@ namespace MWWorld
         void tspRoomWakeObject(const Ptr& ptr);
         void tspUpdateRoomObjectLifecycle(float duration);
 
-        // TSP_ROOM_ACTOR_HIBERNATE_051_V30
-        // Same topology room authority as hard clutter parking. Sleeping actors keep
-        // their CellStore ref and Bullet collision, but leave Mechanics/AI and are
-        // hidden until their room wakes or combat/awareness requires them.
-        std::set<ESM::RefNum> mTspRoomSleepingActors;
-        CellStore* mTspRoomActorCell = nullptr;
-        float mTspRoomActorAccumulator = 0.f;
-        float mTspRoomActorSenseAccumulator = 0.25f;
-        float mTspRoomActorLogAccumulator = 0.f;
-        std::uint64_t mTspRoomActorSleepTotal = 0;
-        std::uint64_t mTspRoomActorWakeTotal = 0;
-
-        void tspWakeSleepingRoomActors(CellStore* cell, const char* reason);
-        void tspUpdateRoomActorLifecycle(float duration);
-
         std::vector<osg::ref_ptr<SceneUtil::WorkItem>> mWorkItems;
 
         std::optional<ChangeCellGridRequest> mChangeCellGridRequest;

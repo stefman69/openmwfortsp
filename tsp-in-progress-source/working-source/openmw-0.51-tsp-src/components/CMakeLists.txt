@@ -753,3 +753,14 @@ if (MSVC AND PRECOMPILE_HEADERS_WITH_MSVC)
         <boost/program_options/options_description.hpp>
     )
 endif()
+
+# >>> TSP_CRASHCATCHER_SAFE_ISA_V1 BEGIN
+# Crash diagnostics must themselves run on the physical TSP CPU,
+# regardless of capabilities exposed by the ARM64 build container.
+set_source_files_properties(
+    crashcatcher/crashcatcher.cpp
+    PROPERTIES
+        COMPILE_OPTIONS "-march=armv8-a;-O2;-fno-lto"
+)
+# <<< TSP_CRASHCATCHER_SAFE_ISA_V1 END
+

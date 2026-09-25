@@ -46,6 +46,9 @@
 /* TSP_TEXT_INJECT_V64 -- queue of characters for the engine to inject. */
 #define TEXT_INJECT_FILE "/tmp/openmw-tsp-text-inject"
 
+/* TSP_NAME_TEXT_LOCK_051_V67 -- engine-owned mandatory text field flag. */
+#define TEXT_REQUIRED_FLAG "/tmp/openmw-tsp-text-required"
+
 /* TSP_TEXT_EXIT_CONTROLLER_051_V55
  * Shared with ControllerManager's existing sTspTextOffFlag. This file means:
  * "SDL may still have an EditBox focused, but the user intentionally selected
@@ -97,6 +100,22 @@ static FILE *log_file = NULL;
 static bool grabbed = false;
 static bool suppress_auto_text = false;
 
+/*
+ * TSP_FACE_LAYOUT_051_V67
+ *
+ * Stock/CrossMix exposes the TSP face buttons in the historical swapped
+ * evdev order used by this helper:
+ *   physical A=305 B=304 X=308 Y=307
+ *
+ * muOS/Knulli use the standard Linux BTN_* identities:
+ *   physical A=304 B=305 X=307 Y=308
+ *
+ * SDL already corrects this for ordinary OpenMW controller menus. This
+ * helper bypasses SDL and reads evdev directly, so normalize standard
+ * muOS/Knulli events back to the helper's existing logical identities.
+ */
+static bool tsp_standard_face_layout = false;
+
 /* TSP_EXPLICIT_UI_STATE_051_V58
  * GAME-mode MENU transitions wait for the physical release so SDL/OpenMW sees
  * a complete MENU press/release pair before TEXT reclaims EVIOCGRAB.
@@ -138,6 +157,68 @@ static void handle_signal(int sig)
 static const char *mode_name(control_mode value)
 {
     return value == MODE_TEXT ? "TEXT" : "GAME";
+}
+
+static void tsp_detect_face_layout(void)
+{
+    const char *override = getenv("OPENMW_TSP_FACE_LAYOUT");
+    const char *reason = "stock/crossmix";
+
+    if (override != NULL && strcmp(override, "standard") == 0)
+    {
+        tsp_standard_face_layout = true;
+        reason = "OPENMW_TSP_FACE_LAYOUT=standard";
+    }
+    else if (override != NULL && strcmp(override, "legacy") == 0)
+    {
+        tsp_standard_face_layout = false;
+        reason = "OPENMW_TSP_FACE_LAYOUT=legacy";
+    }
+    else if (access("/opt/muos", F_OK) == 0)
+    {
+        tsp_standard_face_layout = true;
+        reason = "muOS";
+    }
+    else if (access("/userdata", F_OK) == 0)
+    {
+        tsp_standard_face_layout = true;
+        reason = "Knulli/Batocera";
+    }
+
+    if (log_file != NULL)
+    {
+        fprintf(
+            log_file,
+            "TSP_FACE_LAYOUT_051_V67 layout=%s reason=%s "
+            "logical-A=%d logical-B=%d logical-X=%d logical-Y=%d\n",
+            tsp_standard_face_layout ? "standard-normalized" : "legacy",
+            reason,
+            KEY_TSP_A,
+            KEY_TSP_B,
+            KEY_TSP_X,
+            KEY_TSP_Y);
+        fflush(log_file);
+    }
+}
+
+static unsigned int tsp_normalize_face_key(unsigned int code)
+{
+    if (!tsp_standard_face_layout)
+        return code;
+
+    switch (code)
+    {
+        case BTN_A:
+            return KEY_TSP_A;
+        case BTN_B:
+            return KEY_TSP_B;
+        case BTN_X:
+            return KEY_TSP_X;
+        case BTN_Y:
+            return KEY_TSP_Y;
+        default:
+            return code;
+    }
 }
 
 static const char *key_name(unsigned int code)
@@ -569,6 +650,11 @@ static bool openmw_text_active(void)
     return access(TEXT_ACTIVE_FLAG, F_OK) == 0;
 }
 
+static bool openmw_text_required(void)
+{
+    return access(TEXT_REQUIRED_FLAG, F_OK) == 0;
+}
+
 /* TSP_EXPLICIT_UI_STATE_051_V58 */
 static bool openmw_mouse_active(void);
 
@@ -610,8 +696,28 @@ static void set_text_suppressed(bool suppressed)
 static void sync_automatic_mode(void)
 {
     const bool active = openmw_text_active();
+    const bool required = openmw_text_required();
     const bool force_controller = access(FORCE_CONTROLLER_FLAG, F_OK) == 0;
     const bool mouse_active = openmw_mouse_active();
+
+    // TSP_NAME_TEXT_LOCK_051_V67
+    // The first-name screen must remain owned by TEXT until OpenMW accepts
+    // the name. Do not permit B/MENU/left-stick handoff to strand the dialog.
+    if (active && required)
+    {
+        menu_to_text_pending = false;
+        menu_release_seen = false;
+        left_stick_mouse_armed = true;
+
+        unlink(MOUSE_MODE_FLAG);
+        unlink(MOUSE_REQUEST_FLAG);
+        set_text_suppressed(false);
+
+        if (mode != MODE_TEXT)
+            set_mode(MODE_TEXT);
+
+        return;
+    }
 
     // TSP_EXPLICIT_UI_STATE_051_V58
     // B's force-controller request is stronger than every other text-menu state.
@@ -912,8 +1018,27 @@ static void leave_text_mode(void)
 
 static void handle_key_event(const struct input_event *event)
 {
+    // TSP_FACE_LAYOUT_051_V67
+    // Normalize only the four face buttons. Start/Select/Menu, shoulders,
+    // D-pad and axes keep their original raw identities.
+    const unsigned int raw_code = event->code;
+    struct input_event logical_event = *event;
+    logical_event.code = tsp_normalize_face_key(raw_code);
+    event = &logical_event;
+
     const bool pressed = event->value != 0;
     log_raw_key(event);
+
+    if (raw_code != event->code && log_file != NULL)
+    {
+        fprintf(
+            log_file,
+            "TSP_FACE_LAYOUT_051_V67 raw=%u normalized=%u name=%s\n",
+            raw_code,
+            event->code,
+            key_name(event->code));
+        fflush(log_file);
+    }
 
     if (mode != MODE_TEXT) {
         /*
@@ -958,7 +1083,15 @@ static void handle_key_event(const struct input_event *event)
          * engine injects this directly now, and emitting both typed
          * every character twice wherever SDL text synthesis works. */
     } else if (event->code == TSP_TEXT_CANCEL_KEY) {
-        leave_text_mode();
+        if (openmw_text_required())
+        {
+            // First-name entry cannot be cancelled. Give B a useful action
+            // instead: delete the previous character.
+            tsp_queue_injected_char((char)8);
+            log_line("TSP_NAME_TEXT_LOCK_051_V67 B=backspace; cancel blocked.");
+        }
+        else
+            leave_text_mode();
     } else if (event->code == KEY_TSP_X) {
         toggle_alt_charset();
     } else if (event->code == KEY_TSP_Y) {
@@ -970,7 +1103,10 @@ static void handle_key_event(const struct input_event *event)
          * engine injects this directly now, and emitting both typed
          * every character twice wherever SDL text synthesis works. */
     } else if (event->code == KEY_TSP_MENU) {
-        tsp_enter_pointing_mode();
+        if (openmw_text_required())
+            log_line("TSP_NAME_TEXT_LOCK_051_V67 MENU ignored; TEXT required.");
+        else
+            tsp_enter_pointing_mode();
 #if TSP_TEXT_CANCEL_KEY != KEY_TSP_B
     } else if (event->code == KEY_TSP_B) {
         /* TSP_TEXT_INJECT_V64 */
@@ -996,6 +1132,14 @@ static void handle_abs_event(const struct input_event *event)
             left_y = event->value;
 
         if (mode == MODE_TEXT) {
+            // TSP_NAME_TEXT_LOCK_051_V67
+            // Do not allow first-name entry to transition TEXT -> MOUSE.
+            if (openmw_text_required())
+            {
+                left_stick_mouse_armed = true;
+                return;
+            }
+
             const int dx = abs(left_x - left_x_center);
             const int dy = abs(left_y - left_y_center);
             const int neutral_x = left_x_threshold / 2;
@@ -1076,6 +1220,9 @@ int main(int argc, char **argv)
     signal(SIGTERM, handle_signal);
     signal(SIGHUP, handle_signal);
 
+    // TSP_FACE_LAYOUT_051_V67
+    tsp_detect_face_layout();
+
     /*
      * Clear crash leftovers before OpenMW starts. OpenMW will recreate the
      * active flag only when a real text-entry session begins.
@@ -1131,6 +1278,8 @@ int main(int argc, char **argv)
     log_line("TSP_TEXT_EXIT_CONTROLLER_051_V55 active.");
     log_line("TSP_B_EXIT_MENU_HANDOFF_051_V57 active.");
     log_line("TSP_EXPLICIT_UI_STATE_051_V58 active.");
+    log_line("TSP_FACE_LAYOUT_051_V67 active.");
+    log_line("TSP_NAME_TEXT_LOCK_051_V67 active.");
     log_line("Menu cycle in text UI: MOUSE -> TEXT -> CONTROLLER -> TEXT.");
     log_line("B from TEXT: force CONTROLLER until SDL text focus ends.");
     log_line("Corrected physical codes: Start=315 Select=314 Menu=316.");

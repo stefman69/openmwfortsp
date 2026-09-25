@@ -45,13 +45,6 @@ namespace MWGui::Widgets
         updateWidgets();
     }
 
-    // TSP_CHARGEN_VALUE_FONT_051_V70
-    void MWSkill::setNameFontHeight(int height)
-    {
-        if (mSkillNameWidget != nullptr)
-            mSkillNameWidget->setFontHeight(height);
-    }
-
     void MWSkill::updateWidgets()
     {
         if (mSkillNameWidget)
@@ -73,15 +66,6 @@ namespace MWGui::Widgets
             else
                 mSkillValueWidget->_setWidgetState("normal");
         }
-    }
-
-    // TSP_CONFIGURED_CHARGEN_FONTS_051_V72
-    void MWSkill::tspV72SetFontHeight(int height)
-    {
-        if (mSkillNameWidget)
-            mSkillNameWidget->setFontHeight(height);
-        if (mSkillValueWidget)
-            mSkillValueWidget->setFontHeight(height);
     }
 
     void MWSkill::setStateSelected(bool selected)
@@ -141,13 +125,6 @@ namespace MWGui::Widgets
         updateWidgets();
     }
 
-    // TSP_CHARGEN_VALUE_FONT_051_V70
-    void MWAttribute::setNameFontHeight(int height)
-    {
-        if (mAttributeNameWidget != nullptr)
-            mAttributeNameWidget->setFontHeight(height);
-    }
-
     void MWAttribute::onClicked(MyGUI::Widget* /*sender*/)
     {
         eventClicked(this);
@@ -180,14 +157,6 @@ namespace MWGui::Widgets
             else
                 mAttributeValueWidget->_setWidgetState("normal");
         }
-    }
-
-    void MWAttribute::tspV72SetFontHeight(int height)
-    {
-        if (mAttributeNameWidget)
-            mAttributeNameWidget->setFontHeight(height);
-        if (mAttributeValueWidget)
-            mAttributeValueWidget->setFontHeight(height);
     }
 
     void MWAttribute::setStateSelected(bool selected)
@@ -282,12 +251,6 @@ namespace MWGui::Widgets
             else
                 mSpellNameWidget->setCaption({});
         }
-    }
-
-    void MWSpell::tspV72SetNameFontHeight(int height)
-    {
-        if (mSpellNameWidget)
-            mSpellNameWidget->setFontHeight(height);
     }
 
     void MWSpell::setStateSelected(bool selected)

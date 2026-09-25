@@ -415,8 +415,9 @@ namespace MWGui
             return;
 
         Widgets::MWSkillPtr skillWidget;
-        const int lineHeight = Settings::gui().mFontSize + 2;
-        MyGUI::IntCoord coord1(0, 0, mSkillList->getWidth(), 18);
+        // TSP_RACE_SKILL_ROWS_051_V72
+        const int lineHeight = Settings::gui().mTspSkillListFontSize.get() + 4;
+        MyGUI::IntCoord coord1(0, 0, mSkillList->getWidth(), lineHeight);
 
         const MWWorld::ESMStore& store = *MWBase::Environment::get().getESMStore();
         const ESM::Race* race = store.get<ESM::Race>().find(mCurrentRaceId);
@@ -428,6 +429,7 @@ namespace MWGui
 
             skillWidget = mSkillList->createWidget<Widgets::MWSkill>("MW_StatNameValue", coord1, MyGUI::Align::Default);
             skillWidget->setSkillId(skill);
+            skillWidget->tspV72SetFontHeight(Settings::gui().mTspSkillListFontSize.get());
             skillWidget->setSkillValue(Widgets::MWSkill::SkillValue(static_cast<float>(bonus.mBonus), 0.f));
             ToolTips::createSkillToolTip(skillWidget, skill);
 
@@ -448,7 +450,8 @@ namespace MWGui
         if (mCurrentRaceId.empty())
             return;
 
-        const int lineHeight = Settings::gui().mFontSize + 2;
+        // TSP_RACE_POWER_ROWS_051_V72
+        const int lineHeight = Settings::gui().mTspStatsFontSize.get() + 4;
         MyGUI::IntCoord coord(0, 0, mSpellPowerList->getWidth(), lineHeight);
 
         const MWWorld::ESMStore& store = *MWBase::Environment::get().getESMStore();
@@ -460,6 +463,7 @@ namespace MWGui
             Widgets::MWSpellPtr spellPowerWidget = mSpellPowerList->createWidget<Widgets::MWSpell>(
                 "MW_StatName", coord, MyGUI::Align::Default, std::string("SpellPower") + MyGUI::utility::toString(i));
             spellPowerWidget->setSpellId(spellpower);
+            spellPowerWidget->tspV72SetNameFontHeight(Settings::gui().mTspStatsFontSize.get());
             spellPowerWidget->setUserString("ToolTipType", "Spell");
             spellPowerWidget->setUserString("Spell", spellpower.serialize());
 

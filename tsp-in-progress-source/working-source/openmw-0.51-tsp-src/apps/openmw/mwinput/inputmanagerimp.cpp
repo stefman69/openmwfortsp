@@ -24,6 +24,8 @@
 #include <algorithm>
 #include <string>
 #include <MyGUI_Gui.h>
+#include <MyGUI_InputManager.h>
+#include <MyGUI_EditBox.h>
 #include <MyGUI_KeyCode.h>
 #include <MyGUI_RenderManager.h>
 #include <MyGUI_TextBox.h>
@@ -32,6 +34,7 @@
 #include <MyGUI_PointerManager.h>
 #include <MyGUI_ImageBox.h>
 #include "../mwgui/mode.hpp"
+#include "../mwgui/windowbase.hpp"
 
 namespace MWInput
 {
@@ -45,23 +48,27 @@ namespace MWInput
         constexpr int sTspCursorSize = 32;
         constexpr int sTspCursorHotX = -7;
         constexpr int sTspCursorHotY = 0;
-        // TSP_CURSOR_POLICY_051_V48 -- where a pointer may exist at all.
+        // TSP_SAVELOAD_CURSOR_MODAL_051_V72
+        // Save/Load is modal over GM_MainMenu. V48 hid the software cursor
+        // merely because GM_MainMenu remained anywhere in the mode stack.
+        // The pointer still moved, which is why save rows highlighted.
+        // Judge the active controller window instead.
         bool tspCursorAllowed(MWBase::WindowManager* windowManager)
         {
-            // Never outside a GUI. getCursorVisible() stays true after a menu
-            // closes, which is why a dead pointer sat on the gameplay screen.
             if (!windowManager->isGuiMode())
                 return false;
-            // Settings FIRST: it is opened through the pause menu, so the
-            // main-menu test below would otherwise kill the one place Steve
-            // most wants a pointer.
-            if (windowManager->isSettingsWindowVisible())
-                return true;
+
             if (windowManager->containsMode(MWGui::GM_Loading)
                 || windowManager->containsMode(MWGui::GM_LoadingWallpaper))
                 return false;
-            if (windowManager->containsMode(MWGui::GM_MainMenu))
-                return false;
+
+            if (MWGui::WindowBase* top = windowManager->getActiveControllerWindow())
+            {
+                if (!top->isGamepadCursorAllowed()
+                    && !windowManager->isSettingsWindowVisible())
+                    return false;
+            }
+
             return true;
         }
         // TSP_CURSOR_POLICY_051_V48
@@ -145,7 +152,76 @@ namespace MWInput
         // SDL text-input state is controlled by OpenMW/MyGUI when an EditBox
         // actually owns text focus. This gives the helper an automatic,
         // context-sensitive trigger instead of stealing game/menu controls.
+        // TSP_TEXT_ENTRY_SDL_ONLY_051_V73
+        // Keep the helper tied to real SDL text-input state. Controller-mouse
+        // code explicitly restarts SDL text input only for a direct editable
+        // EditBox click.
         const bool tspTextEntryActive = SDL_IsTextInputActive() == SDL_TRUE;
+
+        // TSP_NAME_TEXT_LOCK_051_V67
+        //
+        // The initial Jiub/player-name dialog is not an optional text field:
+        // controller/mouse mode has nowhere useful to go until a name is
+        // accepted. Publish that fact to the raw text helper so MENU, B and
+        // left-stick cannot accidentally strand this screen outside TEXT mode.
+        //
+        // This is deliberately GM_Name only. Save names, enchanting,
+        // spellmaking and custom-class names retain the normal TEXT /
+        // CONTROLLER / MOUSE handoff.
+        const bool tspNameTextRequired
+            = tspTextEntryActive
+            && windowManager->containsMode(MWGui::GM_Name);
+
+        static bool tspNameTextRequiredWas = false;
+
+        if (tspNameTextRequired)
+        {
+            bool tspRequiredFlagPresent = false;
+            if (std::FILE* tspRequiredProbe
+                = std::fopen("/tmp/openmw-tsp-text-required", "r"))
+            {
+                tspRequiredFlagPresent = true;
+                std::fclose(tspRequiredProbe);
+            }
+
+            if (!tspRequiredFlagPresent)
+            {
+                if (std::FILE* tspRequired
+                    = std::fopen("/tmp/openmw-tsp-text-required", "w"))
+                {
+                    std::fputs("1\n", tspRequired);
+                    std::fclose(tspRequired);
+                }
+            }
+
+            // A stale B/controller handoff must never beat mandatory name entry.
+            std::remove("/tmp/openmw-tsp-force-controller");
+            std::remove("/tmp/openmw-tsp-mouse-request");
+            std::remove("/tmp/openmw-tsp-mouse-mode");
+
+            if (!tspNameTextRequiredWas)
+            {
+                mControllerManager->tspSetMouseMode(false);
+                std::fprintf(
+                    stderr,
+                    "TSP_NAME_TEXT_LOCK_051_V67 name-entry=locked-text\n");
+                std::fflush(stderr);
+            }
+        }
+        else
+        {
+            std::remove("/tmp/openmw-tsp-text-required");
+
+            if (tspNameTextRequiredWas)
+            {
+                std::fprintf(
+                    stderr,
+                    "TSP_NAME_TEXT_LOCK_051_V67 name-entry=unlocked\n");
+                std::fflush(stderr);
+            }
+        }
+
+        tspNameTextRequiredWas = tspNameTextRequired;
 
         // TSP_TEXT_INJECT_051_V64 -- the helper hands us the chosen character in a
         // file instead of relying on its synthetic uinput keystroke being
@@ -167,9 +243,16 @@ namespace MWInput
                     const unsigned char tspCh
                         = static_cast<unsigned char>(tspInjectBuf[tspI]);
                     if (tspCh == 8)
+                    {
                         windowManager->injectKeyPress(MyGUI::KeyCode::Backspace, 0, false);
+                        windowManager->injectKeyRelease(MyGUI::KeyCode::Backspace);
+                        // TSP_TEXT_TAP_RELEASE_051_V72
+                    }
                     else if (tspCh == 13 || tspCh == 10)
+                    {
                         windowManager->injectKeyPress(MyGUI::KeyCode::Return, 0, false);
+                        windowManager->injectKeyRelease(MyGUI::KeyCode::Return);
+                    }
                     else if (tspCh >= 32 && tspCh < 127)
                         windowManager->injectKeyPress(MyGUI::KeyCode::None, tspCh, false);
                     else
@@ -268,7 +351,10 @@ namespace MWInput
                 std::remove("/tmp/openmw-tsp-mouse-request");
                 std::remove("/tmp/openmw-tsp-mouse-mode");
 
-                if (!tspForceController && tspTextEntryActive && windowManager->isGuiMode())
+                if (!tspForceController
+                    && tspTextEntryActive
+                    && !tspNameTextRequired
+                    && windowManager->isGuiMode())
                 {
                     mControllerManager->tspSetMouseMode(true);
                     std::fprintf(stderr,

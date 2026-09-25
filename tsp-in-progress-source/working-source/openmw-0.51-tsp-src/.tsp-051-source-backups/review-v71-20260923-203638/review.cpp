@@ -84,9 +84,7 @@ namespace MWGui
 
         MyGUI::Widget* attributes = getWidget("Attributes");
         const auto& store = MWBase::Environment::get().getWorld()->getStore().get<ESM::Attribute>();
-        // TSP_REVIEW_CONFIGURED_FONT_051_V72
-        const int tspReviewStatRowV72 = Settings::gui().mTspStatsFontSize.get() + 4;
-        MyGUI::IntCoord coord{ 8, 4, 310, tspReviewStatRowV72 };
+        MyGUI::IntCoord coord{ 8, 4, 250, 18 };
         for (const ESM::Attribute& attribute : store)
         {
             auto* widget
@@ -99,30 +97,12 @@ namespace MWGui
             widget->setUserString("ImageTexture_AttributeImage", attribute.mIcon);
             widget->setAttributeId(attribute.mId);
             widget->setAttributeValue(Widgets::MWAttribute::AttributeValue());
-
-            // TSP_REVIEW_STATS_051_V71
-            // Keep the review-screen attribute names inside their
-            // original 18px rows without changing global UI sizing.
-            widget->setNameFontHeight(16);
-
-            widget->tspV72SetFontHeight(Settings::gui().mTspStatsFontSize.get());
             coord.top += coord.height;
         }
 
         // Setup skills
         getWidget(mSkillView, "SkillView");
         mSkillView->eventMouseWheel += MyGUI::newDelegate(this, &ReviewDialog::onMouseWheel);
-
-        // TSP_REVIEW_STATS_051_V71
-        //
-        // D-pad continues controlling the review buttons.
-        // RIGHT STICK owns only the right-hand SkillView.
-        //
-        // ControllerManager V70 sees this tag and modifies the
-        // ScrollView offset directly, including its visible scrollbar.
-        // TSP_REVIEW_DIRECT_SCROLL_051_V72
-        mControllerScrollWidget = mSkillView;
-        mSkillView->setUserString("TSPDirectControllerScroll", "1");
 
         for (const ESM::Skill& skill : MWBase::Environment::get().getESMStore()->get<ESM::Skill>())
         {
@@ -143,7 +123,6 @@ namespace MWGui
         if (Settings::gui().mControllerMenus)
         {
             setControllerFocus(mButtons, mControllerFocus, true);
-            mControllerButtons.mRStick = "#{Interface:ScrollUp}";
             mControllerButtons.mA = "#{Interface:Select}";
             mControllerButtons.mB = "#{Interface:Back}";
             mControllerButtons.mX = "#{Interface:Done}";
@@ -311,11 +290,9 @@ namespace MWGui
             MyGUI::IntCoord(0, coord1.top, coord1.width + coord2.width, coord1.height), MyGUI::Align::Default);
         groupWidget->eventMouseWheel += MyGUI::newDelegate(this, &ReviewDialog::onMouseWheel);
         groupWidget->setCaption(MyGUI::UString(label));
-        // TSP_REVIEW_ROW_FONTS_051_V72
-        groupWidget->setFontHeight(Settings::gui().mTspSkillListFontSize.get());
         mSkillWidgets.push_back(groupWidget);
 
-        const int lineHeight = Settings::gui().mTspSkillListFontSize.get() + 4;
+        const int lineHeight = Settings::gui().mFontSize + 2;
         coord1.top += lineHeight;
         coord2.top += lineHeight;
     }
@@ -328,22 +305,17 @@ namespace MWGui
 
         skillNameWidget = mSkillView->createWidget<MyGUI::TextBox>("SandText", coord1, MyGUI::Align::Default);
         skillNameWidget->setCaption(MyGUI::UString(text));
-        skillNameWidget->setFontHeight(16);
-        skillNameWidget->setFontHeight(Settings::gui().mTspSkillListFontSize.get());
         skillNameWidget->eventMouseWheel += MyGUI::newDelegate(this, &ReviewDialog::onMouseWheel);
 
         skillValueWidget = mSkillView->createWidget<MyGUI::TextBox>("SandTextRight", coord2, MyGUI::Align::Default);
         skillValueWidget->setCaption(value);
-        skillValueWidget->setFontHeight(16);
-        skillValueWidget->setFontHeight(Settings::gui().mTspSkillListFontSize.get());
         skillValueWidget->_setWidgetState(state);
         skillValueWidget->eventMouseWheel += MyGUI::newDelegate(this, &ReviewDialog::onMouseWheel);
 
         mSkillWidgets.push_back(skillNameWidget);
         mSkillWidgets.push_back(skillValueWidget);
 
-        // TSP_REVIEW_STATS_051_V71
-        const int lineHeight = Settings::gui().mTspSkillListFontSize.get() + 4;
+        const int lineHeight = Settings::gui().mFontSize + 2;
         coord1.top += lineHeight;
         coord2.top += lineHeight;
 
@@ -357,13 +329,11 @@ namespace MWGui
         skillNameWidget = mSkillView->createWidget<MyGUI::TextBox>(
             "SandText", coord1 + MyGUI::IntSize(coord2.width, 0), MyGUI::Align::Default);
         skillNameWidget->setCaption(text);
-        skillNameWidget->setFontHeight(16);
-        skillNameWidget->setFontHeight(Settings::gui().mTspSkillListFontSize.get());
         skillNameWidget->eventMouseWheel += MyGUI::newDelegate(this, &ReviewDialog::onMouseWheel);
 
         mSkillWidgets.push_back(skillNameWidget);
 
-        const int lineHeight = Settings::gui().mTspSkillListFontSize.get() + 4;
+        const int lineHeight = Settings::gui().mFontSize + 2;
         coord1.top += lineHeight;
         coord2.top += lineHeight;
     }
@@ -373,18 +343,13 @@ namespace MWGui
         Widgets::MWSpellPtr widget = mSkillView->createWidget<Widgets::MWSpell>(
             "MW_StatName", coord1 + MyGUI::IntSize(coord2.width, 0), MyGUI::Align::Default);
         widget->setSpellId(spell->mId);
-
-        // TSP_REVIEW_STATS_051_V71
-        widget->setNameFontHeight(16);
-
-        widget->tspV72SetNameFontHeight(Settings::gui().mTspSkillListFontSize.get());
         widget->setUserString("ToolTipType", "Spell");
         widget->setUserString("Spell", spell->mId.serialize());
         widget->eventMouseWheel += MyGUI::newDelegate(this, &ReviewDialog::onMouseWheel);
 
         mSkillWidgets.push_back(widget);
 
-        const int lineHeight = Settings::gui().mTspSkillListFontSize.get() + 4;
+        const int lineHeight = Settings::gui().mFontSize + 2;
         coord1.top += lineHeight;
         coord2.top += lineHeight;
     }
@@ -445,9 +410,7 @@ namespace MWGui
         mSkillWidgets.clear();
 
         const int valueSize = 40;
-        const int tspReviewSkillRowV72 = Settings::gui().mTspSkillListFontSize.get() + 4;
-        MyGUI::IntCoord coord1(10, 0, mSkillView->getWidth() - (10 + valueSize) - 24,
-            tspReviewSkillRowV72);
+        MyGUI::IntCoord coord1(10, 0, mSkillView->getWidth() - (10 + valueSize) - 24, 18);
         MyGUI::IntCoord coord2(coord1.left + coord1.width, coord1.top, valueSize, coord1.height);
 
         if (!mMajorSkills.empty())
@@ -533,9 +496,6 @@ namespace MWGui
         mSkillView->setVisibleVScroll(false);
         mSkillView->setCanvasSize(mSkillView->getWidth(), std::max(mSkillView->getHeight(), coord1.top));
         mSkillView->setVisibleVScroll(true);
-
-        // TSP_REVIEW_STATS_051_V71
-        mSkillView->setViewOffset(MyGUI::IntPoint(0, 0));
     }
 
     // widget controls

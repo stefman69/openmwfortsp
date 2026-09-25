@@ -622,24 +622,95 @@ namespace MWGui
             if (!entry.mMapWidget->getVisible() || widgetCropped(entry.mMapWidget, mLocalMap))
                 continue;
 
-            if (!entry.mMapTexture)
-            {
-                if (mActiveCell->isExterior())
-                    requestMapRender(&MWBase::Environment::get().getWorldModel()->getExterior(
-                        ESM::ExteriorCellLocation(entry.mCellX, entry.mCellY, ESM::Cell::sDefaultWorldspaceId)));
+            const bool missingWrapper
+                = !entry.mMapTexture;
 
-                osg::ref_ptr<osg::Texture2D> texture = mLocalMapRender->getMapTexture(entry.mCellX, entry.mCellY);
-                if (texture)
+            // TSP_LOCALMAP_BROAD_V6_MAPWINDOW_TYPEFIX
+            // MapEntry stores MyGUI::ITexture, but our concrete map
+            // wrapper is MyGUIPlatform::OSGTexture.
+            auto* currentMapTexture
+                = dynamic_cast<MyGUIPlatform::OSGTexture*>(
+                    entry.mMapTexture.get());
+
+            const bool emptyWrapper
+                = entry.mMapTexture
+                && (!currentMapTexture
+                    || currentMapTexture->getTexture() == nullptr);
+
+            if ((missingWrapper || emptyWrapper)
+                && mActiveCell->isExterior())
+            {
+                requestMapRender(
+                    &MWBase::Environment::get()
+                         .getWorldModel()
+                         ->getExterior(
+                             ESM::ExteriorCellLocation(
+                                 entry.mCellX,
+                                 entry.mCellY,
+                                 ESM::Cell::sDefaultWorldspaceId)));
+            }
+
+            osg::ref_ptr<osg::Texture2D> texture
+                = mLocalMapRender->getMapTexture(
+                    entry.mCellX,
+                    entry.mCellY);
+
+            if (texture)
+            {
+                const bool changed
+                    = !entry.mMapTexture
+                    || !currentMapTexture
+                    || currentMapTexture->getTexture()
+                        != texture.get();
+
+                if (changed)
                 {
-                    entry.mMapTexture = std::make_unique<MyGUIPlatform::OSGTexture>(texture);
-                    entry.mMapWidget->setRenderItemTexture(entry.mMapTexture.get());
-                    // The widget is Y-down, the RTT image is Y-up, so this UV is inverted
-                    entry.mMapWidget->getSubWidgetMain()->_setUVSet(MyGUI::FloatRect(0.f, 1.f, 1.f, 0.f));
+                    osg::Texture2D* previous
+                        = currentMapTexture
+                        ? currentMapTexture->getTexture()
+                        : nullptr;
+
+                    entry.mMapTexture
+                        = std::make_unique<
+                            MyGUIPlatform::OSGTexture>(
+                                texture);
+
+                    entry.mMapWidget
+                        ->setRenderItemTexture(
+                            entry.mMapTexture.get());
+
+                    entry.mMapWidget
+                        ->getSubWidgetMain()
+                        ->_setUVSet(
+                            MyGUI::FloatRect(
+                                0.f,
+                                1.f,
+                                1.f,
+                                0.f));
+
+                    Log(Debug::Warning)
+                        << "TSP_LOCALMAP_BROAD_V6 "
+                           "GUI_REBIND_PASS"
+                        << " cell="
+                        << entry.mCellX << ","
+                        << entry.mCellY
+                        << " previous="
+                        << previous
+                        << " current="
+                        << texture.get();
+
                     needRedraw = true;
                 }
-                else
-                    entry.mMapTexture = std::make_unique<MyGUIPlatform::OSGTexture>(std::string(), nullptr);
             }
+            else if (!entry.mMapTexture)
+            {
+                entry.mMapTexture
+                    = std::make_unique<
+                        MyGUIPlatform::OSGTexture>(
+                            std::string(),
+                            nullptr);
+            }
+
             if (!entry.mFogTexture && mFogOfWarToggled && mFogOfWarEnabled)
             {
                 osg::ref_ptr<osg::Texture2D> tex = mLocalMapRender->getFogOfWarTexture(entry.mCellX, entry.mCellY);

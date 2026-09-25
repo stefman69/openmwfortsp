@@ -50,13 +50,6 @@ static void tsp_prec2(void) {
 
 KHASH_MAP_IMPL_INT(shaderlist, shader_t *);
 
-/* TSP_SHADER_LIFETIME_DIAG_V13
- * Diagnostic only: do not change the intentional persistent prewarm policy.
- */
-void tsp_native_life_shader_generated(GLuint id,GLenum type);
-void tsp_native_life_shader_delete_request(GLuint id,int attached,int forwarded);
-void tsp_native_life_shader_native_deleted(GLuint id);
-
 GLuint APIENTRY_GL4ES gl4es_glCreateShader(GLenum shaderType) {
     DBG(printf("glCreateShader(%s)\n", PrintEnum(shaderType));)
     // sanity check
@@ -94,7 +87,6 @@ GLuint APIENTRY_GL4ES gl4es_glCreateShader(GLenum shaderType) {
     }
     glshader->id = shader;
     glshader->type = shaderType;
-    tsp_native_life_shader_generated(shader, shaderType);
     if(glshader->source) {
         free(glshader->source);
         glshader->source = NULL;
@@ -143,7 +135,6 @@ void APIENTRY_GL4ES gl4es_glDeleteShader(GLuint shader) {
         return;
     }
     glshader->deleted = 1;
-    tsp_native_life_shader_delete_request(glshader->id, glshader->attached, glshader->attached ? 0 : 1);
     noerrorShim();
     if(!glshader->attached) {
         actually_deleteshader(shader);
@@ -153,7 +144,6 @@ void APIENTRY_GL4ES gl4es_glDeleteShader(GLuint shader) {
         if(gles_glDeleteShader) {
             errorGL();
             gles_glDeleteShader(shader);
-            tsp_native_life_shader_native_deleted(shader);
         }   
     }
 }

@@ -39,6 +39,10 @@ static void tsp_vbo_log(const char* what, unsigned int id, long len, const void*
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+/* TSP_NATIVE_BUFFER_DIAG_V13 */
+void tsp_native_life_buffer_generated(GLuint id,const char*owner);
+void tsp_native_life_buffer_storage(GLuint id,unsigned long long bytes,const char*owner);
+void tsp_native_life_buffer_deleted(GLuint id,const char*owner);
 /* TSP_VBO_ORPHAN_V5 - a fresh GLES buffer name for every write into a DYNAMIC/STREAM array VBO.
  * The full gl4es shadow is uploaded into the new name with glBufferData, the old name is deleted
  * (the driver keeps its storage alive for any draw already queued on it), every attrib that
@@ -69,8 +73,10 @@ static int tsp_orphan_rotate(glbuffer_t* buff, GLenum target) {
     if (!buff->data || buff->size <= 0) return 0;
     gles_glGenBuffers(1, &fresh);
     if (!fresh) return 0;
+    tsp_native_life_buffer_generated(fresh, "orphan-rotate");
     bindBuffer(target, fresh);
     gles_glBufferData(target, buff->size, buff->data, buff->usage);
+    tsp_native_life_buffer_storage(fresh, (unsigned long long)buff->size, "orphan-rotate");
     buff->real_buffer = fresh;
     rebind_real_buff_arrays(old, fresh);   /* glstate->vao attribs that named the old buffer */
     if (glstate->gleshard) {              /* gles-side cache: force a fresh glVertexAttribPointer */
@@ -267,11 +273,13 @@ void APIENTRY_GL4ES gl4es_glBufferData(GLenum target, GLsizeiptr size, const GLv
         if(!buff->real_buffer) {
             LOAD_GLES(glGenBuffers);
             gles_glGenBuffers(1, &buff->real_buffer);
+            tsp_native_life_buffer_generated(buff->real_buffer, "BufferData");
         }
         LOAD_GLES(glBufferData);
         LOAD_GLES(glBindBuffer);
         bindBuffer(target, buff->real_buffer);
         gles_glBufferData(target, size, data, usage);
+        tsp_native_life_buffer_storage(buff->real_buffer, (unsigned long long)size, "BufferData");
         DBG(printf(" => real VBO %d\n", buff->real_buffer);)
     }
         
@@ -324,11 +332,13 @@ void APIENTRY_GL4ES gl4es_glNamedBufferData(GLuint buffer, GLsizeiptr size, cons
         if(!buff->real_buffer) {
             LOAD_GLES(glGenBuffers);
             gles_glGenBuffers(1, &buff->real_buffer);
+            tsp_native_life_buffer_generated(buff->real_buffer, "NamedBufferData");
         }
         LOAD_GLES(glBufferData);
         LOAD_GLES(glBindBuffer);
         bindBuffer(buff->type, buff->real_buffer);
         gles_glBufferData(buff->type, size, data, usage);
+        tsp_native_life_buffer_storage(buff->real_buffer, (unsigned long long)size, "NamedBufferData");
     }
 
     buff->size = size;
@@ -825,6 +835,7 @@ void deleteSingleBuffer(GLuint buffer) {
    else if(glstate->bind_buffer.want_index == buffer) glstate->bind_buffer.want_index = 0;
    else if(glstate->bind_buffer.array == buffer) glstate->bind_buffer.array = 0;
    gles_glDeleteBuffers(1, &buffer);
+   tsp_native_life_buffer_deleted(buffer, "deleteSingleBuffer");
 }
 
 void unboundBuffers()

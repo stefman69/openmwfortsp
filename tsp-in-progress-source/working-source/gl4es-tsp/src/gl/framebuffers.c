@@ -25,7 +25,15 @@ static tsp_native_rb_rec_t tsp_native_rb[TSP_NATIVE_RB_MAX];
 static unsigned long tsp_native_fbo_gen=0, tsp_native_fbo_del=0;
 static unsigned long tsp_native_rb_gen=0, tsp_native_rb_del=0;
 static unsigned long tsp_native_tex_gen=0, tsp_native_tex_del=0;
+/* TSP_MEMMAP_NATIVE_DIAG_V13 */
+static unsigned long tsp_native_buf_gen=0, tsp_native_buf_del=0;
+static unsigned long tsp_native_shader_gen=0, tsp_native_shader_req_del=0, tsp_native_shader_native_del=0;
+static unsigned long tsp_native_program_gen=0, tsp_native_program_del=0;
 static unsigned long long tsp_native_rb_live_bytes=0;
+typedef struct { GLuint id; unsigned long long bytes; int used; } tsp_native_buf_rec_t;
+#define TSP_NATIVE_BUF_MAX 8192
+static tsp_native_buf_rec_t tsp_native_buf[TSP_NATIVE_BUF_MAX];
+static unsigned long long tsp_native_buf_live_bytes=0;
 static unsigned long tsp_native_seq=0;
 
 static int tsp_native_life_on(void) {
@@ -38,7 +46,7 @@ static FILE* tsp_native_life_file(void) {
     if(!tsp_native_life_on()) return NULL;
     if(!chk){
         const char*p=getenv("LIBGL_TSP_NATIVE_LIFE_PATH"); chk=1;
-        if(p&&p[0]){f=fopen(p,"a");if(f){fprintf(f,"# TSP_NATIVE_LIFE_DIAG_V1 seq event fields\n");fflush(f);}}
+        if(p&&p[0]){f=fopen(p,"a");if(f){fprintf(f,"# TSP_NATIVE_LIFE_DIAG_V3 TSP_MEMMAP_NATIVE_DIAG_V13 FBO/RB/TEX/BUF/SHADER/PROGRAM\n");fflush(f);}}
     }
     return f;
 }
@@ -65,6 +73,80 @@ static tsp_native_rb_rec_t* tsp_native_rb_slot(GLuint id,int create) {
 }
 static void tsp_native_fbo_generated(GLuint id){if(!tsp_native_life_on()||!id)return;++tsp_native_fbo_gen;tsp_native_log("GEN_FBO id=%u gen=%lu del=%lu live=%ld",id,tsp_native_fbo_gen,tsp_native_fbo_del,(long)tsp_native_fbo_gen-(long)tsp_native_fbo_del);}
 static void tsp_native_fbo_deleted(GLuint id){if(!tsp_native_life_on()||!id)return;++tsp_native_fbo_del;tsp_native_log("DEL_FBO id=%u gen=%lu del=%lu live=%ld",id,tsp_native_fbo_gen,tsp_native_fbo_del,(long)tsp_native_fbo_gen-(long)tsp_native_fbo_del);}
+static tsp_native_buf_rec_t* tsp_native_buf_slot(GLuint id,int create){
+    tsp_native_buf_rec_t*empty=NULL;if(!id)return NULL;
+    for(int i=0;i<TSP_NATIVE_BUF_MAX;i++){
+        if(tsp_native_buf[i].used&&tsp_native_buf[i].id==id)return &tsp_native_buf[i];
+        if(!tsp_native_buf[i].used&&!empty)empty=&tsp_native_buf[i];
+    }
+    if(create&&empty){empty->used=1;empty->id=id;empty->bytes=0;return empty;}
+    return NULL;
+}
+void tsp_native_life_buffer_generated(GLuint id,const char*owner){
+    if(!tsp_native_life_on()||!id)return;
+    ++tsp_native_buf_gen;(void)tsp_native_buf_slot(id,1);
+    tsp_native_log("GEN_BUF id=%u owner=%s gen=%lu del=%lu live=%ld live_bytes=%llu",
+        id,owner?owner:"?",tsp_native_buf_gen,tsp_native_buf_del,
+        (long)tsp_native_buf_gen-(long)tsp_native_buf_del,tsp_native_buf_live_bytes);
+}
+void tsp_native_life_buffer_storage(GLuint id,unsigned long long bytes,const char*owner){
+    if(!tsp_native_life_on()||!id)return;
+    tsp_native_buf_rec_t*r=tsp_native_buf_slot(id,1);
+    if(r){
+        if(tsp_native_buf_live_bytes>=r->bytes)tsp_native_buf_live_bytes-=r->bytes;
+        else tsp_native_buf_live_bytes=0;
+        r->bytes=bytes;tsp_native_buf_live_bytes+=bytes;
+    }
+    tsp_native_log("BUF_STORAGE id=%u owner=%s bytes=%llu live_bytes=%llu",
+        id,owner?owner:"?",bytes,tsp_native_buf_live_bytes);
+}
+void tsp_native_life_buffer_deleted(GLuint id,const char*owner){
+    if(!tsp_native_life_on()||!id)return;
+    tsp_native_buf_rec_t*r=tsp_native_buf_slot(id,0);
+    if(r){
+        if(tsp_native_buf_live_bytes>=r->bytes)tsp_native_buf_live_bytes-=r->bytes;
+        else tsp_native_buf_live_bytes=0;
+        r->used=0;r->id=0;r->bytes=0;
+    }
+    ++tsp_native_buf_del;
+    tsp_native_log("DEL_BUF id=%u owner=%s gen=%lu del=%lu live=%ld live_bytes=%llu",
+        id,owner?owner:"?",tsp_native_buf_gen,tsp_native_buf_del,
+        (long)tsp_native_buf_gen-(long)tsp_native_buf_del,tsp_native_buf_live_bytes);
+}
+void tsp_native_life_shader_generated(GLuint id,GLenum type){
+    if(!tsp_native_life_on()||!id)return;
+    ++tsp_native_shader_gen;
+    tsp_native_log("GEN_SHADER id=%u type=0x%x gen=%lu req_del=%lu native_del=%lu live=%ld",
+        id,type,tsp_native_shader_gen,tsp_native_shader_req_del,tsp_native_shader_native_del,
+        (long)tsp_native_shader_gen-(long)tsp_native_shader_native_del);
+}
+void tsp_native_life_shader_delete_request(GLuint id,int attached,int forwarded){
+    if(!tsp_native_life_on()||!id)return;
+    ++tsp_native_shader_req_del;
+    tsp_native_log("REQ_DEL_SHADER id=%u attached=%d native_forwarded=%d gen=%lu req_del=%lu native_del=%lu",
+        id,attached,forwarded,tsp_native_shader_gen,tsp_native_shader_req_del,tsp_native_shader_native_del);
+}
+void tsp_native_life_shader_native_deleted(GLuint id){
+    if(!tsp_native_life_on()||!id)return;
+    ++tsp_native_shader_native_del;
+    tsp_native_log("DEL_SHADER_NATIVE id=%u gen=%lu req_del=%lu native_del=%lu live=%ld",
+        id,tsp_native_shader_gen,tsp_native_shader_req_del,tsp_native_shader_native_del,
+        (long)tsp_native_shader_gen-(long)tsp_native_shader_native_del);
+}
+void tsp_native_life_program_generated(GLuint id){
+    if(!tsp_native_life_on()||!id)return;
+    ++tsp_native_program_gen;
+    tsp_native_log("GEN_PROGRAM id=%u gen=%lu del=%lu live=%ld",
+        id,tsp_native_program_gen,tsp_native_program_del,
+        (long)tsp_native_program_gen-(long)tsp_native_program_del);
+}
+void tsp_native_life_program_deleted(GLuint id){
+    if(!tsp_native_life_on()||!id)return;
+    ++tsp_native_program_del;
+    tsp_native_log("DEL_PROGRAM id=%u gen=%lu del=%lu live=%ld",
+        id,tsp_native_program_gen,tsp_native_program_del,
+        (long)tsp_native_program_gen-(long)tsp_native_program_del);
+}
 static void tsp_native_rb_generated(GLuint id,const char*owner){if(!tsp_native_life_on()||!id)return;++tsp_native_rb_gen;(void)tsp_native_rb_slot(id,1);tsp_native_log("GEN_RB id=%u owner=%s gen=%lu del=%lu live=%ld bytes=%llu",id,owner?owner:"?",tsp_native_rb_gen,tsp_native_rb_del,(long)tsp_native_rb_gen-(long)tsp_native_rb_del,tsp_native_rb_live_bytes);}
 static void tsp_native_rb_deleted(GLuint id,const char*owner){
     if(!tsp_native_life_on()||!id)return;tsp_native_rb_rec_t*r=tsp_native_rb_slot(id,0);

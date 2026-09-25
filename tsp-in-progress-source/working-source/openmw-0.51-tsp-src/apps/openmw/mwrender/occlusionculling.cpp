@@ -669,6 +669,23 @@ namespace MWRender
 
     void PagedOccluderCallback::operator()(osg::Node* node, osgUtil::CullVisitor* cv)
     {
+        // TSP_RTTOCC_CAMERA_GUARD_V13
+        osg::Camera* tspCurrentCamera = cv ? cv->getCurrentCamera() : nullptr;
+        if (tspCurrentCamera == nullptr || tspCurrentCamera->getName() != Constants::SceneCamera)
+        {
+            const char* tspDiag = std::getenv("TSP_RTTOCC_DIAG");
+            static unsigned int tspWrongCameraLogs = 0;
+            if (mCuller->isFrameActive() && tspDiag && tspDiag[0] == '1' && tspWrongCameraLogs < 128)
+            {
+                ++tspWrongCameraLogs;
+                Log(Debug::Warning) << "TSP_RTTOCC_WRONGCAM_V13 callback=paged active=1 camera="
+                                    << (tspCurrentCamera ? tspCurrentCamera->getName() : "<null>")
+                                    << " count=" << tspWrongCameraLogs;
+            }
+            traverse(node, cv);
+            return;
+        }
+
         if (!mCuller->isFrameActive())
         {
             traverse(node, cv);
@@ -823,7 +840,24 @@ namespace MWRender
 
     void CellOcclusionCallback::operator()(osg::Group* node, osgUtil::CullVisitor* cv)
     {
-        // If occlusion is not active this frame (interior, shadow camera, etc.), traverse normally
+        // TSP_RTTOCC_CAMERA_GUARD_V13
+        osg::Camera* tspCurrentCamera = cv ? cv->getCurrentCamera() : nullptr;
+        if (tspCurrentCamera == nullptr || tspCurrentCamera->getName() != Constants::SceneCamera)
+        {
+            const char* tspDiag = std::getenv("TSP_RTTOCC_DIAG");
+            static unsigned int tspWrongCameraLogs = 0;
+            if (mCuller->isFrameActive() && tspDiag && tspDiag[0] == '1' && tspWrongCameraLogs < 128)
+            {
+                ++tspWrongCameraLogs;
+                Log(Debug::Warning) << "TSP_RTTOCC_WRONGCAM_V13 callback=cell active=1 camera="
+                                    << (tspCurrentCamera ? tspCurrentCamera->getName() : "<null>")
+                                    << " count=" << tspWrongCameraLogs;
+            }
+            traverse(node, cv);
+            return;
+        }
+
+        // If occlusion is not active this frame, traverse normally.
         if (!mCuller->isFrameActive())
         {
             traverse(node, cv);

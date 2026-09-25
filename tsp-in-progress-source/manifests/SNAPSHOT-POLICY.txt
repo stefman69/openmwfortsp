@@ -1,6 +1,6 @@
 TSP SOURCE-ONLY WORKING SNAPSHOT
 ================================
-captured=20260922-121509
+captured=20260925-113643
 
 repository=stefman69/openmwfortsp
 

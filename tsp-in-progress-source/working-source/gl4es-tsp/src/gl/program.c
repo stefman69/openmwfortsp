@@ -97,6 +97,10 @@ void APIENTRY_GL4ES gl4es_glBindAttribLocation(GLuint program, GLuint index, con
         noerrorShim();
 }
 
+/* TSP_PROGRAM_LIFETIME_DIAG_V13 */
+void tsp_native_life_program_generated(GLuint id);
+void tsp_native_life_program_deleted(GLuint id);
+
 GLuint APIENTRY_GL4ES gl4es_glCreateProgram(void) {
     DBG(printf("glCreateProgram()\n");)
     FLUSH_BEGINEND;
@@ -114,6 +118,7 @@ GLuint APIENTRY_GL4ES gl4es_glCreateProgram(void) {
         program = ++lastprogram;
         noerrorShim();
     }
+    tsp_native_life_program_generated(program);
     // store the new empty shader in the list for later use
    	khint_t k;
    	int ret;
@@ -187,6 +192,7 @@ void APIENTRY_GL4ES gl4es_glDeleteProgram(GLuint program) {
     LOAD_GLES2(glDeleteProgram);
     if(gles_glDeleteProgram) {
         gles_glDeleteProgram(glprogram->id);
+        tsp_native_life_program_deleted(glprogram->id);
         errorGL();
     } else
         noerrorShim();
@@ -618,11 +624,20 @@ static void fill_program(program_t *glprogram)
     }
     free(name);
     // reset uniform cache
+    /* TSP_PROGRAM_CACHE_REALLOC_FIX_V13
+     * Growing this cache used to overwrite the previous malloc pointer.
+     */
     if(glprogram->cache.cap < uniform_cache) {
-        glprogram->cache.cap=uniform_cache;
-        glprogram->cache.cache = malloc(glprogram->cache.cap);
+        void* tsp_new_cache = realloc(glprogram->cache.cache, uniform_cache);
+        if(!tsp_new_cache && uniform_cache) {
+            LOGE("TSP_PROGRAM_CACHE_REALLOC_FIX_V13 allocation failed size=%u\n", uniform_cache);
+            return;
+        }
+        glprogram->cache.cache = tsp_new_cache;
+        glprogram->cache.cap = uniform_cache;
     }
-    memset(glprogram->cache.cache, 0, glprogram->cache.cap);
+    if(glprogram->cache.cache && glprogram->cache.cap)
+        memset(glprogram->cache.cache, 0, glprogram->cache.cap);
     //Maybe Sampler uniform should not be initialized to 0, but to -1, to be sure the value is initialized?
     if(glprogram->uniform) {
         uniform_t *m;

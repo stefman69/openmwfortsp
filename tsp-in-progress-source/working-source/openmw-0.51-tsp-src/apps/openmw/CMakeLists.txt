@@ -274,3 +274,14 @@ endif()
 if (WIN32 AND BUILD_OPENMW)
     INSTALL(TARGETS openmw RUNTIME DESTINATION ".")
 endif()
+
+# >>> TSP_LOCALMAP_SAFE_ISA_V73 BEGIN
+# The Docker ARM64 environment may expose CPU features that the physical
+# handheld does not have. Keep the experimental local-map TU at the
+# architectural ARMv8-A baseline and do not let LTO re-target it.
+set_source_files_properties(
+    mwrender/localmap.cpp
+    PROPERTIES
+        COMPILE_OPTIONS "-march=armv8-a;-O2;-fno-lto"
+)
+# <<< TSP_LOCALMAP_SAFE_ISA_V73 END

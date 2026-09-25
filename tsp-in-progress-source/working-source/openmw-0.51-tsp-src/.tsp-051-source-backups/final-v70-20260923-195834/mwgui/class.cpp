@@ -147,39 +147,11 @@ namespace MWGui
         getWidget(mOkButton, "OKButton");
         mOkButton->eventMouseButtonClick += MyGUI::newDelegate(this, &PickClassDialog::onOkClicked);
 
-        // TSP_PICK_CLASS_VALUE_FONT_051_V70
-        //
-        // Only the values that were too large are reduced:
-        // specialization value, attribute names and skill names.
-        // Headings and all other chargen text retain the existing font.
-        mSpecializationName->setFontHeight(16);
-
-        for (int i = 0; i < 2; ++i)
-            mFavoriteAttribute[i]->setNameFontHeight(16);
-
-        for (int i = 0; i < 5; ++i)
-        {
-            mMajorSkill[i]->setNameFontHeight(16);
-            mMinorSkill[i]->setNameFontHeight(16);
-        }
-
         if (Settings::gui().mControllerMenus)
         {
             mControllerButtons.mLStick = "#{Interface:Mouse}";
             mControllerButtons.mA = "#{Interface:Select}";
             mControllerButtons.mB = "#{Interface:Back}";
-        }
-
-        // TSP_PICK_CLASS_CONFIGURED_FONT_051_V72
-        const int tspStatsFontV72 = Settings::gui().mTspStatsFontSize.get();
-        const int tspSkillFontV72 = Settings::gui().mTspSkillListFontSize.get();
-        mSpecializationName->setFontHeight(tspStatsFontV72);
-        mFavoriteAttribute[0]->tspV72SetFontHeight(tspStatsFontV72);
-        mFavoriteAttribute[1]->tspV72SetFontHeight(tspStatsFontV72);
-        for (int tspI = 0; tspI < 5; ++tspI)
-        {
-            mMajorSkill[tspI]->tspV72SetFontHeight(tspSkillFontV72);
-            mMinorSkill[tspI]->tspV72SetFontHeight(tspSkillFontV72);
         }
 
         updateClasses();
@@ -609,22 +581,6 @@ namespace MWGui
         okButton->eventMouseButtonClick += MyGUI::newDelegate(this, &CreateClassDialog::onOkClicked);
         mButtons.push_back(okButton);
 
-        // TSP_CREATE_CLASS_VALUE_FONT_051_V70
-        //
-        // Same targeted sizing as PickClassDialog. The labels
-        // "Specialization", "Favorite Attributes", "Major Skills"
-        // and "Minor Skills" remain untouched.
-        mSpecializationName->setFontHeight(16);
-
-        mFavoriteAttribute0->setNameFontHeight(16);
-        mFavoriteAttribute1->setNameFontHeight(16);
-
-        for (int i = 0; i < 5; ++i)
-        {
-            mMajorSkill[i]->setNameFontHeight(16);
-            mMinorSkill[i]->setNameFontHeight(16);
-        }
-
         if (Settings::gui().mControllerMenus)
         {
             okButton->setStateSelected(true);
@@ -649,19 +605,6 @@ namespace MWGui
         mMinorSkill[2]->setSkillId(ESM::Skill::Spear);
         mMinorSkill[3]->setSkillId(ESM::Skill::Athletics);
         mMinorSkill[4]->setSkillId(ESM::Skill::Enchant);
-
-        // TSP_CREATE_CLASS_CONFIGURED_FONT_051_V72
-        const int tspStatsFontV72 = Settings::gui().mTspStatsFontSize.get();
-        const int tspSkillFontV72 = Settings::gui().mTspSkillListFontSize.get();
-        mEditName->setFontHeight(tspStatsFontV72);
-        mSpecializationName->setFontHeight(tspStatsFontV72);
-        mFavoriteAttribute0->tspV72SetFontHeight(tspStatsFontV72);
-        mFavoriteAttribute1->tspV72SetFontHeight(tspStatsFontV72);
-        for (int tspI = 0; tspI < 5; ++tspI)
-        {
-            mMajorSkill[tspI]->tspV72SetFontHeight(tspSkillFontV72);
-            mMinorSkill[tspI]->tspV72SetFontHeight(tspSkillFontV72);
-        }
 
         setSpecialization(0);
         update();

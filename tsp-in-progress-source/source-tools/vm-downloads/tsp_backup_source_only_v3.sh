@@ -75,6 +75,11 @@ EXTRA_LIST="$HOME/tsp_backup_source_extra.txt"
 STAMP="$(date +%Y%m%d-%H%M%S)"
 MAN_DIR="$STAGE/manifests"
 
+# TSP_MANUAL_TOKEN_AND_REUSE_V1
+MAXAGE="${TSP_MAXAGE:-3600}"
+PUSHED_MARK="$MAN_DIR/PUSHED-TO-GITHUB.txt"
+FULL_MAN="$MAN_DIR/SHA256SUMS-SOURCE-ONLY.txt"
+
 hdr() {
     printf '\n============================================================\n'
     printf '%s\n' "$*"
@@ -182,14 +187,44 @@ say "new gl4es forks          : DISABLED"
 # This intentionally does NOT call the old tsp_source_backup.sh because that
 # script captured device/card state and build/export directories.
 # ---------------------------------------------------------------------------
-hdr "1. FRESH SOURCE-ONLY STAGE"
+hdr "1. SOURCE-ONLY STAGE"
 
-rm -rf "$STAGE"
-mkdir -p \
-    "$STAGE/working-source" \
-    "$STAGE/reference-source" \
-    "$STAGE/source-tools" \
-    "$MAN_DIR/git"
+REUSE_STAGE=0
+STAGE_AGE=-1
+
+if [ "${TSP_FORCE_STAGE:-0}" != "1" ] \
+   && [ -f "$FULL_MAN" ] \
+   && [ ! -f "$PUSHED_MARK" ]; then
+
+    STAGE_MTIME="$(stat -c %Y "$FULL_MAN" 2>/dev/null || echo 0)"
+    NOW="$(date +%s)"
+    STAGE_AGE=$(( NOW - STAGE_MTIME ))
+
+    if [ "$STAGE_AGE" -ge 0 ] && [ "$STAGE_AGE" -lt "$MAXAGE" ]; then
+        REUSE_STAGE=1
+    fi
+fi
+
+if [ "$REUSE_STAGE" -eq 1 ]; then
+    say "reusing recent UNSENT source backup"
+    say "age: $(( STAGE_AGE / 60 )) minute(s)"
+    say "stage: $STAGE"
+    say "source trees will NOT be recopied"
+else
+    if [ "${TSP_FORCE_STAGE:-0}" = "1" ]; then
+        say "TSP_FORCE_STAGE=1 -> forcing fresh source capture"
+    elif [ -f "$PUSHED_MARK" ]; then
+        say "previous stage was already sent -> creating fresh source backup"
+    else
+        say "no recent complete unsent stage -> creating fresh source backup"
+    fi
+
+    rm -rf "$STAGE"
+    mkdir -p \
+        "$STAGE/working-source" \
+        "$STAGE/reference-source" \
+        "$STAGE/source-tools" \
+        "$MAN_DIR/git"
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -584,6 +619,12 @@ say "source files: $(find "$STAGE" -type f | wc -l)"
 say "stage size  : $(du -sh "$STAGE" | cut -f1)"
 say "built files : 0"
 
+fi
+
+if [ "$REUSE_STAGE" -eq 1 ]; then
+    say "PASS: reused existing unsent source snapshot"
+fi
+
 if [ "$MODE" = "list" ]; then
     hdr "LIST MODE - NOTHING PUSHED"
 
@@ -600,16 +641,109 @@ fi
 # ---------------------------------------------------------------------------
 hdr "7. GITHUB AUTH"
 
-[ -s "$TOKEN_FILE" ] \
-    || fail 60 "missing GitHub token file: $TOKEN_FILE"
-
-chmod 600 "$TOKEN_FILE" 2>/dev/null || true
-
-TOKEN="$(head -n1 "$TOKEN_FILE" | tr -d '[:space:]')"
-[ -n "$TOKEN" ] || fail 60 "$TOKEN_FILE is empty"
-
-AUTH_URL="https://$GH_USER:$TOKEN@github.com/$GH_USER/$GH_REPO.git"
 SAFE_URL="https://github.com/$GH_USER/$GH_REPO.git"
+TOKEN=""
+AUTH_URL=""
+
+set_auth_url() {
+    AUTH_URL="https://$GH_USER:$TOKEN@github.com/$GH_USER/$GH_REPO.git"
+}
+
+test_token() {
+    local candidate="$1"
+    local url="https://$GH_USER:$candidate@github.com/$GH_USER/$GH_REPO.git"
+
+    GIT_TERMINAL_PROMPT=0 \
+        git ls-remote "$url" HEAD >/dev/null 2>&1
+}
+
+manual_token_prompt() {
+    local candidate=""
+
+    echo
+    echo "------------------------------------------------------------"
+    echo "MANUAL GITHUB TOKEN ENTRY"
+    echo "------------------------------------------------------------"
+    echo "Paste your GitHub token below and press Enter."
+    echo "The token is intentionally NOT displayed while you paste/type it."
+    echo
+
+    while true; do
+        read -r -s -p "PASTE GITHUB TOKEN HERE (input hidden): " candidate
+        echo
+
+        if [ -z "$candidate" ]; then
+            echo "ERROR: token was empty. Try again."
+            continue
+        fi
+
+        echo "Checking token..."
+
+        if test_token "$candidate"; then
+            TOKEN="$candidate"
+            set_auth_url
+
+            printf '%s\n' "$TOKEN" > "$TOKEN_FILE"
+            chmod 600 "$TOKEN_FILE" 2>/dev/null || true
+
+            echo "PASS: GitHub authentication works."
+            echo "Saved validated token to:"
+            echo "  $TOKEN_FILE"
+            return 0
+        fi
+
+        echo
+        echo "ERROR: GitHub rejected that token."
+        echo "Paste it again, or press Ctrl+C if you want to stop."
+        echo
+    done
+}
+
+if [ -s "$TOKEN_FILE" ]; then
+    chmod 600 "$TOKEN_FILE" 2>/dev/null || true
+
+    TOKEN="$(head -n1 "$TOKEN_FILE" | tr -d '[:space:]')"
+
+    if [ -n "$TOKEN" ] && test_token "$TOKEN"; then
+        set_auth_url
+        say "saved GitHub token: PASS"
+    else
+        echo "Saved GitHub token failed authentication."
+        echo "You can enter your valid token manually now."
+
+        TOKEN=""
+        manual_token_prompt \
+            || fail 60 "manual GitHub token authentication failed"
+    fi
+else
+    echo "No saved GitHub token was found."
+    echo "You can enter your token manually now."
+
+    manual_token_prompt \
+        || fail 60 "manual GitHub token authentication failed"
+fi
+
+push_with_manual_retry() {
+    if git -C "$REPO_DIR" push "$@"; then
+        return 0
+    fi
+
+    echo
+    echo "------------------------------------------------------------"
+    echo "GITHUB PUSH FAILED"
+    echo "------------------------------------------------------------"
+    echo "The currently selected token could not perform this push."
+    echo "Enter a token manually and the SAME push will be retried."
+    echo
+
+    TOKEN=""
+
+    manual_token_prompt || return 1
+
+    git -C "$REPO_DIR" remote set-url origin "$AUTH_URL"
+
+    git -C "$REPO_DIR" push "$@"
+}
 
 if [ ! -d "$REPO_DIR/.git" ]; then
     rm -rf "$REPO_DIR"
@@ -649,7 +783,7 @@ else
     git -C "$REPO_DIR" checkout -q -B "$WORK_BR" "origin/$CLEAN_BR" \
         || fail 64 "could not create local $WORK_BR"
 
-    git -C "$REPO_DIR" push -q -u origin "$WORK_BR" \
+    push_with_manual_retry -q -u origin "$WORK_BR" \
         || fail 65 "could not create GitHub branch $WORK_BR"
 
     say "created GitHub branch $WORK_BR"
@@ -683,7 +817,7 @@ else
         -m "TSP in-progress source-only snapshot $STAMP" \
         || fail 67 "git commit failed"
 
-    git push -q origin "$WORK_BR" \
+    push_with_manual_retry -q origin "$WORK_BR" \
         || fail 68 "push to $WORK_BR failed"
 
     say "pushed branch: $WORK_BR"
@@ -699,6 +833,12 @@ CLEAN_AFTER="$(git rev-parse "origin/$CLEAN_BR")"
 if [ "$CLEAN_BEFORE" != "$CLEAN_AFTER" ]; then
     fail 70 "clean branch $CLEAN_BR moved during this run (before=$CLEAN_BEFORE after=$CLEAN_AFTER)"
 fi
+
+{
+    echo "pushed=$(date -Is 2>/dev/null || date)"
+    echo "branch=$WORK_BR"
+    echo "commit=$(git rev-parse HEAD)"
+} > "$PUSHED_MARK"
 
 clear_token
 trap - EXIT

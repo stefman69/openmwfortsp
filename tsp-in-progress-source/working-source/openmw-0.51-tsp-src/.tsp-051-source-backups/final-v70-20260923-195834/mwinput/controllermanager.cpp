@@ -1,9 +1,7 @@
 #include "controllermanager.hpp"
 
 #include <MyGUI_Button.h>
-#include <MyGUI_EditBox.h>
 #include <MyGUI_InputManager.h>
-#include <MyGUI_ScrollView.h>
 
 #include <SDL.h>
 
@@ -323,95 +321,33 @@ namespace MWInput
 
                 if (std::abs(tspDialogueScrollRightYV35) > 0.14f)
                 {
-                    MyGUI::Widget* tspScrollTargetV70
-                        = tspDialogueScrollTopWinV35->getControllerScrollWidget();
+                    mMouseManager->warpMouseToWidget(
+                        tspDialogueScrollTopWinV35->getControllerScrollWidget());
 
-                    MyGUI::ScrollView* tspDirectScrollV70 = nullptr;
+                    tspDialogueScrollWinMgrV35->setCursorVisible(false);
 
-                    if (tspScrollTargetV70 != nullptr
-                        && tspScrollTargetV70->isUserString(
-                            "TSPDirectControllerScroll"))
+                    const float tspDialogueScrollWheelMoveV35
+                        = -tspDialogueScrollRightYV35
+                        * dt
+                        * 1800.0f;
+
+                    mMouseManager->injectMouseMove(
+                        0.0f,
+                        0.0f,
+                        tspDialogueScrollWheelMoveV35);
+
+                    mMouseManager->warpMouse();
+
+                    static bool tspDialogueScrollLoggedV35 = false;
+
+                    if (!tspDialogueScrollLoggedV35)
                     {
-                        tspDirectScrollV70
-                            = tspScrollTargetV70
-                                  ->castType<MyGUI::ScrollView>(false);
-                    }
+                        Log(Debug::Info)
+                            << "TSP_DIRECT_RSTICK_SCROLL_051_V35"
+                            << " axis=RIGHTY"
+                            << " mode=continuous";
 
-                    if (tspDirectScrollV70 != nullptr)
-                    {
-                        // TSP_BIRTHSIGN_LOWER_SCROLL_051_V70
-                        //
-                        // MyGUI ScrollView offsets are negative while
-                        // scrolling downward. setViewOffset() performs
-                        // range clamping and also moves the actual visible
-                        // scrollbar, so there is no mouse/wheel emulation.
-                        MyGUI::IntPoint tspOffsetV70
-                            = tspDirectScrollV70->getViewOffset();
-
-                        int tspDeltaV70 = static_cast<int>(
-                            tspDialogueScrollRightYV35
-                            * dt
-                            * 650.0f);
-
-                        if (tspDeltaV70 == 0)
-                        {
-                            tspDeltaV70
-                                = tspDialogueScrollRightYV35 > 0.f
-                                ? 1
-                                : -1;
-                        }
-
-                        tspOffsetV70.top -= tspDeltaV70;
-
-                        tspDirectScrollV70->setViewOffset(
-                            tspOffsetV70);
-
-                        tspDialogueScrollWinMgrV35
-                            ->setCursorVisible(false);
-
-                        static bool tspBirthScrollLoggedV70 = false;
-                        if (!tspBirthScrollLoggedV70)
-                        {
-                            Log(Debug::Info)
-                                << "TSP_BIRTHSIGN_LOWER_SCROLL_051_V70"
-                                << " route=direct-scrollview"
-                                << " control=RIGHTY";
-                            tspBirthScrollLoggedV70 = true;
-                        }
-                    }
-                    else
-                    {
-                        // Preserve the existing generic RS wheel route for
-                        // Dialogue and other already-working scroll areas.
-                        mMouseManager->warpMouseToWidget(
-                            tspScrollTargetV70);
-
-                        tspDialogueScrollWinMgrV35
-                            ->setCursorVisible(false);
-
-                        const float tspDialogueScrollWheelMoveV35
-                            = -tspDialogueScrollRightYV35
-                            * dt
-                            * 1800.0f;
-
-                        mMouseManager->injectMouseMove(
-                            0.0f,
-                            0.0f,
-                            tspDialogueScrollWheelMoveV35);
-
-                        mMouseManager->warpMouse();
-
-                        static bool tspDialogueScrollLoggedV35 = false;
-
-                        if (!tspDialogueScrollLoggedV35)
-                        {
-                            Log(Debug::Info)
-                                << "TSP_DIRECT_RSTICK_SCROLL_051_V35"
-                                << " axis=RIGHTY"
-                                << " mode=continuous";
-
-                            tspDialogueScrollLoggedV35 = true;
-                        }
+                        tspDialogueScrollLoggedV35 = true;
                     }
                 }
             }
@@ -463,42 +399,9 @@ namespace MWInput
             float mouseWheelMove = -zAxis * dt * 1500.0f;
             if (xMove != 0 || yMove != 0 || mouseWheelMove != 0)
             {
-                mMouseManager->injectMouseMove(
-                    xMove,
-                    yMove,
-                    mouseWheelMove);
-
+                mMouseManager->injectMouseMove(xMove, yMove, mouseWheelMove);
                 mMouseManager->warpMouse();
-
-                MWBase::WindowManager* tspCursorWinV70
-                    = MWBase::Environment::get()
-                          .getWindowManager();
-
-                // TSP_SAVELOAD_CURSOR_051_V70
-                //
-                // In Save/Load the EditBox/text ownership can leave
-                // cursorVisible false even after TSP mouse mode has
-                // correctly taken ownership. Actual LS pointer movement
-                // is authoritative: visible cursor ON.
-                //
-                // RS-only wheel movement does NOT show the cursor.
-                if (xMove != 0 || yMove != 0)
-                {
-                    tspCursorWinV70->setCursorVisible(true);
-                    tspCursorWinV70->setCursorActive(true);
-
-                    static bool tspSaveLoadCursorLoggedV70 = false;
-
-                    if (!tspSaveLoadCursorLoggedV70)
-                    {
-                        Log(Debug::Info)
-                            << "TSP_SAVELOAD_CURSOR_051_V70"
-                            << " left-stick=visible-cursor";
-                        tspSaveLoadCursorLoggedV70 = true;
-                    }
-                }
-                else
-                    tspCursorWinV70->setCursorActive(true);
+                MWBase::Environment::get().getWindowManager()->setCursorActive(true);
             }
         }
 
@@ -745,64 +648,6 @@ namespace MWInput
                 {
                     bool mousePressSuccess = mMouseManager->injectMouseButtonRelease(SDL_BUTTON_LEFT);
                     mGamepadMousePressed = false;
-
-                    // TSP_PRECISE_EDITBOX_CLICK_051_V73
-                    // Only the widget physically under the controller-mouse
-                    // cursor may enter text mode. Walk through skin children
-                    // to an owning enabled, editable MyGUI EditBox.
-                    MyGUI::InputManager& tspInputV73 = MyGUI::InputManager::getInstance();
-                    MyGUI::EditBox* tspClickedEditV73 = nullptr;
-                    for (MyGUI::Widget* tspHitV73 = tspInputV73.getMouseFocusWidget();
-                         tspHitV73 != nullptr;
-                         tspHitV73 = tspHitV73->getParent())
-                    {
-                        if (MyGUI::EditBox* tspEditV73 = tspHitV73->castType<MyGUI::EditBox>(false))
-                        {
-                            if (tspEditV73->getEnabled() && !tspEditV73->getEditStatic())
-                                tspClickedEditV73 = tspEditV73;
-                            break;
-                        }
-                    }
-
-                    MWBase::WindowManager* tspWindowV73
-                        = MWBase::Environment::get().getWindowManager();
-
-                    if (tspClickedEditV73 != nullptr)
-                    {
-                        // OpenMW 0.51's wrapper also refreshes SDL text-input
-                        // state, fixing re-entry into Create Class -> name.
-                        tspWindowV73->setKeyFocusWidget(tspClickedEditV73);
-                        std::remove("/tmp/openmw-tsp-force-controller");
-                        tspSetTextSuppressed(false);
-                        tspSetMouseMode(false);
-                        Log(Debug::Info)
-                            << "TSP_PRECISE_EDITBOX_CLICK_051_V73 action=mouse-to-text widget="
-                            << tspClickedEditV73->getName();
-                    }
-                    else
-                    {
-                        // If the previous key focus was an editable EditBox,
-                        // clicking elsewhere must end that stale text focus.
-                        bool tspHadEditableKeyFocusV73 = false;
-                        for (MyGUI::Widget* tspKeyV73 = tspInputV73.getKeyFocusWidget();
-                             tspKeyV73 != nullptr;
-                             tspKeyV73 = tspKeyV73->getParent())
-                        {
-                            if (MyGUI::EditBox* tspEditV73 = tspKeyV73->castType<MyGUI::EditBox>(false))
-                            {
-                                tspHadEditableKeyFocusV73 = !tspEditV73->getEditStatic();
-                                break;
-                            }
-                        }
-
-                        if (tspHadEditableKeyFocusV73)
-                        {
-                            tspWindowV73->setKeyFocusWidget(nullptr);
-                            Log(Debug::Info)
-                                << "TSP_PRECISE_EDITBOX_CLICK_051_V73 action=leave-text";
-                        }
-                    }
-
                     if (mBindingsManager->isDetectingBindingState()) // If the player just triggered binding, don't let
                                                                      // button release bind.
                         return;
