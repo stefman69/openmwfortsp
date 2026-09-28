@@ -1,5 +1,3 @@
-#include <components/debug/debuglog.hpp>
-#include <cstdio>
 #include "spellbuyingwindow.hpp"
 
 #include <vector>
@@ -383,23 +381,16 @@ namespace MWGui
             }
         }
 
-        // TSP_SPELLBUY_PROVEN_CANVAS_051_V13
-        //
-        // Use the normal MyGUI ScrollView setup used by the other working
-        // service lists. mCurrentY is the complete physical spell-list height.
-        //
-        // Do not substitute getViewCoord() here and do not rebuild the
-        // canvas during controller movement.
+        // Canvas size must be expressed with VScroll disabled, otherwise MyGUI would expand the scroll area when the
+        // scrollbar is hidden
         mSpellsView->setVisibleVScroll(false);
         mSpellsView->setCanvasSize(
-            MyGUI::IntSize(
-                mSpellsView->getWidth(),
-                std::max(
-                    mSpellsView->getHeight(),
-                    mCurrentY)));
+            MyGUI::IntSize(mSpellsView->getWidth(), std::max(
+                // TSP_SPELLBUY_CANVAS_RANGE_051_V11
+                mSpellsView->getViewCoord().height,
+                mCurrentY)));
         mSpellsView->setVisibleVScroll(true);
-        mSpellsView->setViewOffset(
-            MyGUI::IntPoint(0, startOffset));
+        mSpellsView->setViewOffset(MyGUI::IntPoint(0, startOffset));
     }
 
     bool SpellBuyingWindow::playerHasSpell(const ESM::RefId& id)
@@ -410,19 +401,6 @@ namespace MWGui
 
     void SpellBuyingWindow::onSpellButtonClick(MyGUI::Widget* sender)
     {
-
-        // TSP_A_SPELLBUY_ACTION_V16
-        if (std::FILE* tspFlagV16
-            = std::fopen("/tmp/openmw-tsp-a-debug", "r"))
-        {
-            std::fclose(tspFlagV16);
-
-            Log(Debug::Warning)
-                << "TSP_A_SPELLBUY_ACTION_V16"
-                << " sender="
-                << static_cast<const void*>(sender);
-        }
-
         int price = *sender->getUserData<int>();
 
         MWWorld::Ptr player = MWMechanics::getPlayer();
@@ -479,145 +457,79 @@ namespace MWGui
 
     bool SpellBuyingWindow::onControllerButtonEvent(const SDL_ControllerButtonEvent& arg)
     {
-        MWBase::WindowManager* winMgr
-            = MWBase::Environment::get().getWindowManager();
+        MWBase::WindowManager* winMgr = MWBase::Environment::get().getWindowManager();
 
         if (arg.button == SDL_CONTROLLER_BUTTON_A)
         {
-
-            // TSP_A_SPELLBUY_CHILD_V16
-            if (std::FILE* tspFlagV16
-                = std::fopen("/tmp/openmw-tsp-a-debug", "r"))
-            {
-                std::fclose(tspFlagV16);
-
-                Log(Debug::Warning)
-                    << "TSP_A_SPELLBUY_CHILD_V16"
-                    << " focus=" << mControllerFocus
-                    << " count=" << mSpellButtons.size()
-                    << " valid="
-                    << (mControllerFocus < mSpellButtons.size()
-                            ? 1 : 0)
-                    << " offset="
-                    << mSpellsView->getViewOffset().top;
-            }
-
             if (mControllerFocus < mSpellButtons.size())
-                onSpellButtonClick(
-                    mSpellButtons[mControllerFocus].first);
+                onSpellButtonClick(mSpellButtons[mControllerFocus].first);
         }
         else if (arg.button == SDL_CONTROLLER_BUTTON_B)
         {
             onCancelButtonClicked(mCancelButton);
             return true;
         }
-        else if (
-            arg.button
-            == SDL_CONTROLLER_BUTTON_RIGHTSTICK)
+        else if (arg.button == SDL_CONTROLLER_BUTTON_RIGHTSTICK)
         {
             // Toggle info tooltip
-            winMgr->setControllerTooltipEnabled(
-                !winMgr->getControllerTooltipEnabled());
+            winMgr->setControllerTooltipEnabled(!winMgr->getControllerTooltipEnabled());
         }
-        else if (
-            arg.button
-            == SDL_CONTROLLER_BUTTON_DPAD_UP)
+        else if (arg.button == SDL_CONTROLLER_BUTTON_DPAD_UP)
         {
             winMgr->restoreControllerTooltips();
 
             if (mSpellButtons.size() <= 1)
                 return true;
 
-            mSpellButtons[mControllerFocus]
-                .first->setStateSelected(false);
-
-            mControllerFocus = wrap(
-                mControllerFocus,
-                mSpellButtons.size(),
-                -1);
-
-            mSpellButtons[mControllerFocus]
-                .first->setStateSelected(true);
+            mSpellButtons[mControllerFocus].first->setStateSelected(false);
+            mControllerFocus = wrap(mControllerFocus, mSpellButtons.size(), -1);
+            mSpellButtons[mControllerFocus].first->setStateSelected(true);
         }
-        else if (
-            arg.button
-            == SDL_CONTROLLER_BUTTON_DPAD_DOWN)
+        else if (arg.button == SDL_CONTROLLER_BUTTON_DPAD_DOWN)
         {
             winMgr->restoreControllerTooltips();
 
             if (mSpellButtons.size() <= 1)
                 return true;
 
-            mSpellButtons[mControllerFocus]
-                .first->setStateSelected(false);
-
-            mControllerFocus = wrap(
-                mControllerFocus,
-                mSpellButtons.size(),
-                1);
-
-            mSpellButtons[mControllerFocus]
-                .first->setStateSelected(true);
+            mSpellButtons[mControllerFocus].first->setStateSelected(false);
+            mControllerFocus = wrap(mControllerFocus, mSpellButtons.size(), 1);
+            mSpellButtons[mControllerFocus].first->setStateSelected(true);
         }
-        else
-            return true;
-
-        // TSP_SPELLBUY_SCROLL_REACHABLE_051_V15
-        //
-        // IMPORTANT:
-        // This block must be OUTSIDE the button-specific
-        // if/else chain. V13 accidentally placed it inside a
-        // LEFTSHOULDER/RIGHTSHOULDER branch, so D-pad navigation
-        // changed the highlight but could never scroll the list.
-        //
-        // Use the same physical-row method that already works in
-        // Merchant Repair. mSpellButtons contains only affordable
-        // entries, while the ScrollView can also contain disabled
-        // rows, so the widget's real Y coordinate is authoritative.
-        if (mControllerFocus < mSpellButtons.size())
+        else if (arg.button == SDL_CONTROLLER_BUTTON_LEFTSHOULDER
+            || arg.button == SDL_CONTROLLER_BUTTON_RIGHTSHOULDER)
         {
-            const int tspLineHeight
-                = std::max(
-                    1,
-                    static_cast<int>(
-                        Settings::gui().mFontSize)
-                        + 2);
+            // TSP_SPELLBUY_SCROLL_6ROW_051_V11
+            //
+            // The V10 window visibly contains six complete rows.
+            // Keep the highlighted spell on row six and move the
+            // ScrollView in exact line-height increments.
+            const size_t tspLine
+                = mSpellButtons[mControllerFocus].second;
 
-            constexpr int tspVisibleRows = 6;
+            constexpr size_t tspVisibleRows = 6;
 
-            MyGUI::Widget* tspFocused
-                = mSpellButtons[mControllerFocus].first;
-
-            const int tspItemLine
-                = tspFocused != nullptr
-                ? std::max(
-                    0,
-                    tspFocused->getTop()
-                        / tspLineHeight)
-                : 0;
-
-            const int tspTopLine
-                = std::max(
-                    0,
-                    tspItemLine
-                        - (tspVisibleRows - 1));
-
-            mSpellsView->setViewOffset(
-                MyGUI::IntPoint(
-                    0,
-                    -tspLineHeight
-                        * tspTopLine));
-
-            // Preserve the existing tooltip behavior.
-            if (winMgr->getControllerTooltipVisible())
+            if (tspLine <= tspVisibleRows)
             {
-                MWBase::Environment::get()
-                    .getInputManager()
-                    ->warpMouseToWidget(
-                        mSpellButtons[
-                            mControllerFocus]
-                            .first);
+                mSpellsView->setViewOffset(
+                    MyGUI::IntPoint(0, 0));
             }
+            else
+            {
+                const int tspLineHeight
+                    = Settings::gui().mFontSize + 2;
+
+                mSpellsView->setViewOffset(
+                    MyGUI::IntPoint(
+                        0,
+                        -tspLineHeight
+                            * static_cast<int>(
+                                tspLine - tspVisibleRows)));
+            }
+
+            // Warp the mouse to the selected spell to show the tooltip
+            if (MWBase::Environment::get().getWindowManager()->getControllerTooltipVisible())
+                MWBase::Environment::get().getInputManager()->warpMouseToWidget(mSpellButtons[mControllerFocus].first);
         }
 
         return true;

@@ -58,6 +58,45 @@ namespace MWGui
         getWidget(mIncreaseButton, "IncreaseButton");
         getWidget(mDecreaseButton, "DecreaseButton");
         getWidget(mNameEdit, "NameEdit");
+
+        // TSP_ALCHEMY_NAME_FIT_051_V2
+        //
+        // The enlarged TSP label was colliding with the left edge of the
+        // name field. Shift the field right while preserving its right edge.
+        {
+            // TSP_UI_POLISH_REFINEMENT_051_V3
+            // TSP_UI_POLISH_FINAL_051_V5
+            constexpr int tspNameGap = 30;
+
+            const MyGUI::IntCoord tspName
+                = mNameEdit->getCoord();
+
+            if (tspName.width > tspNameGap)
+            {
+                mNameEdit->setCoord(
+                    tspName.left + tspNameGap,
+                    tspName.top,
+                    tspName.width - tspNameGap,
+                    tspName.height);
+            }
+
+            // The original Name TextBox itself is only 65px wide.
+            // Moving NameEdit did not change that clipping rectangle,
+            // which is why the final 'e' was still missing.
+            if (mMainWidget->getChildCount() > 0)
+            {
+                MyGUI::Widget* tspNameLabel
+                    = mMainWidget->getChildAt(0);
+
+                tspNameLabel->setSize(
+                    90,
+                    tspNameLabel->getHeight());
+            }
+
+            mNameEdit->setUserString(
+                "TSP_ALCHEMY_NAME_FIT_051_V2", "1");
+        }
+
         getWidget(mItemView, "ItemView");
         getWidget(mFilterValue, "FilterValue");
         getWidget(mFilterType, "FilterType");

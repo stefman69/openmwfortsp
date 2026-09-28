@@ -1,3 +1,5 @@
+#include <components/debug/debuglog.hpp>
+#include <cstdio>
 #include "spellcreationdialog.hpp"
 
 #include <format>
@@ -736,6 +738,21 @@ namespace MWGui
 
     bool SpellCreationDialog::onControllerButtonEvent(const SDL_ControllerButtonEvent& arg)
     {
+
+        // TSP_A_SPELLCREATE_CHILD_V16
+        if (arg.button == SDL_CONTROLLER_BUTTON_A)
+        {
+            if (std::FILE* tspFlagV16
+                = std::fopen("/tmp/openmw-tsp-a-debug", "r"))
+            {
+                std::fclose(tspFlagV16);
+
+                Log(Debug::Warning)
+                    << "TSP_A_SPELLCREATE_CHILD_V16"
+                    << " route=EffectEditorBase";
+            }
+        }
+
         if (arg.button == SDL_CONTROLLER_BUTTON_B)
         {
             onCancelButtonClicked(mCancelButton);
@@ -1031,6 +1048,41 @@ namespace MWGui
 
         if (arg.button == SDL_CONTROLLER_BUTTON_A)
         {
+
+            // TSP_A_EFFECTEDITOR_CHILD_V16
+            if (std::FILE* tspFlagV16
+                = std::fopen("/tmp/openmw-tsp-a-debug", "r"))
+            {
+                std::fclose(tspFlagV16);
+
+                const bool tspAvailableActionV16
+                    = !mRightColumn
+                    && mAvailableFocus
+                        < mAvailableButtons.size();
+
+                const bool tspEditActionV16
+                    = mRightColumn
+                    && mEffectFocus
+                        < mEffectButtons.size();
+
+                Log(Debug::Warning)
+                    << "TSP_A_EFFECTEDITOR_CHILD_V16"
+                    << " rightColumn="
+                    << (mRightColumn ? 1 : 0)
+                    << " availableFocus="
+                    << mAvailableFocus
+                    << " availableCount="
+                    << mAvailableButtons.size()
+                    << " effectFocus="
+                    << mEffectFocus
+                    << " effectCount="
+                    << mEffectButtons.size()
+                    << " availableAction="
+                    << (tspAvailableActionV16 ? 1 : 0)
+                    << " editAction="
+                    << (tspEditActionV16 ? 1 : 0);
+            }
+
             if (!mRightColumn && mAvailableFocus < mAvailableButtons.size())
             {
                 onAvailableEffectClicked(mAvailableButtons[mAvailableFocus]);

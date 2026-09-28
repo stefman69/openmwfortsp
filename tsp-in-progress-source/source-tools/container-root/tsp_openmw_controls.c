@@ -40,6 +40,10 @@
 
 #define TICK_MS 10
 
+/* TSP_TEXT_CHAR_REPEAT_051_V1 */
+#define TEXT_REPEAT_DELAY_MS    350
+#define TEXT_REPEAT_INTERVAL_MS 90
+
 #define TEXT_ACTIVE_FLAG "/tmp/openmw-tsp-text-active"
 #define TEXT_CHAR_FILE   "/tmp/openmw-tsp-text-char"
 #define TEXT_CHAR_TMP    "/tmp/openmw-tsp-text-char.tmp"
@@ -130,6 +134,9 @@ static bool left_stick_mouse_armed = true;
 
 static int dpad_x = 0;
 static int dpad_y = 0;
+
+/* TSP_TEXT_CHAR_REPEAT_051_V1 */
+static uint64_t text_repeat_next_ms = 0;
 
 /* TSP_NO_STICKCLICK_MODES_051_V54 */
 static int left_x = 0;
@@ -838,6 +845,16 @@ static void tsp_request_mouse_mode(void)
     set_mode(MODE_GAME);
 }
 
+/* TSP_TEXT_CHAR_REPEAT_051_V1 */
+static uint64_t tsp_text_now_ms(void)
+{
+    struct timeval value;
+    gettimeofday(&value, NULL);
+
+    return (uint64_t)value.tv_sec * 1000ULL
+        + (uint64_t)value.tv_usec / 1000ULL;
+}
+
 static void change_text_index(int direction)
 {
     const size_t length = charset == CHARSET_ALT
@@ -1198,11 +1215,20 @@ static void handle_abs_event(const struct input_event *event)
         const int old_value = dpad_y;
         dpad_y = event->value;
 
+        if (dpad_y == 0) {
+            text_repeat_next_ms = 0;
+            return;
+        }
+
         if (old_value == 0) {
             if (dpad_y > 0)
                 change_text_index(1);
             else if (dpad_y < 0)
                 change_text_index(-1);
+
+            /* TSP_TEXT_CHAR_REPEAT_051_V1 */
+            text_repeat_next_ms
+                = tsp_text_now_ms() + TEXT_REPEAT_DELAY_MS;
         }
     }
 }
@@ -1278,6 +1304,7 @@ int main(int argc, char **argv)
     log_line("TSP_TEXT_EXIT_CONTROLLER_051_V55 active.");
     log_line("TSP_B_EXIT_MENU_HANDOFF_051_V57 active.");
     log_line("TSP_EXPLICIT_UI_STATE_051_V58 active.");
+    log_line("TSP_TEXT_CHAR_REPEAT_051_V1 active: Up/Down hold repeats characters.");
     log_line("TSP_FACE_LAYOUT_051_V67 active.");
     log_line("TSP_NAME_TEXT_LOCK_051_V67 active.");
     log_line("Menu cycle in text UI: MOUSE -> TEXT -> CONTROLLER -> TEXT.");
@@ -1317,7 +1344,32 @@ int main(int argc, char **argv)
             }
             break;
         }
-    }
+    
+        /* TSP_TEXT_CHAR_REPEAT_051_V1
+         *
+         * The raw ABS event only fires when the D-pad changes position.
+         * Once held, poll() continues waking every TICK_MS, so repeat the
+         * selected character here after the initial delay.
+         */
+        if (mode == MODE_TEXT
+            && dpad_y != 0
+            && text_repeat_next_ms != 0)
+        {
+            const uint64_t now = tsp_text_now_ms();
+
+            if (now >= text_repeat_next_ms)
+            {
+                change_text_index(dpad_y > 0 ? 1 : -1);
+                text_repeat_next_ms
+                    = now + TEXT_REPEAT_INTERVAL_MS;
+            }
+        }
+        else if (mode != MODE_TEXT)
+        {
+            text_repeat_next_ms = 0;
+        }
+
+}
 
     set_mode(MODE_GAME);
     unlink(TEXT_ACTIVE_FLAG);

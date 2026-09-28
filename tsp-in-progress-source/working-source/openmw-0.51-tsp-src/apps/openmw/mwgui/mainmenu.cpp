@@ -1,3 +1,4 @@
+#include <cstdio>
 #include "mainmenu.hpp"
 
 #include <MyGUI_Gui.h>
@@ -5,6 +6,7 @@
 #include <MyGUI_RenderManager.h>
 #include <MyGUI_TextBox.h>
 
+#include <components/debug/debuglog.hpp>
 #include <components/misc/frameratelimiter.hpp>
 #include <components/settings/values.hpp>
 #include <components/vfs/manager.hpp>
@@ -160,6 +162,35 @@ namespace MWGui
 
     void MainMenu::onButtonClicked(MyGUI::Widget* sender)
     {
+
+        // TSP_A_MAINMENU_CLICK_051_V11
+        bool tspADebugClickV11 = false;
+
+        if (std::FILE* tspFlagV11
+            = std::fopen("/tmp/openmw-tsp-a-debug", "r"))
+        {
+            tspADebugClickV11 = true;
+            std::fclose(tspFlagV11);
+        }
+
+        if (tspADebugClickV11)
+        {
+            const std::string* tspNameV11
+                = sender != nullptr
+                ? sender->getUserData<std::string>(false)
+                : nullptr;
+
+            Log(Debug::Warning)
+                << "TSP_A_MAINMENU_CLICK_V11"
+                << " sender="
+                << static_cast<void*>(sender)
+                << " name=["
+                << (tspNameV11 != nullptr
+                        ? *tspNameV11
+                        : std::string("<none>"))
+                << "]";
+        }
+
         MWBase::WindowManager* winMgr = MWBase::Environment::get().getWindowManager();
 
         const std::string& name = *sender->getUserData<std::string>();
@@ -206,12 +237,115 @@ namespace MWGui
         {
             winMgr->toggleSettingsWindow();
         }
-    }
+    
+
+        // TSP_A_MAINMENU_RESULT_V12
+        //
+        // Diagnostic only. The menu action above has already executed.
+        if (std::FILE* tspFlagV12
+            = std::fopen("/tmp/openmw-tsp-a-debug", "r"))
+        {
+            std::fclose(tspFlagV12);
+
+            MWBase::WindowManager* tspWinMgrV12
+                = MWBase::Environment::get().getWindowManager();
+
+            MWGui::WindowBase* tspActiveV12
+                = tspWinMgrV12->getActiveControllerWindow();
+
+            MyGUI::Widget* tspFocusV12
+                = MyGUI::InputManager::getInstance()
+                      .getKeyFocusWidget();
+
+            const bool tspSaveVisibleV12
+                = mSaveGameDialog
+                && mSaveGameDialog->isVisible();
+
+            ConfirmationDialog* tspConfirmV12
+                = tspWinMgrV12->getConfirmationDialog();
+
+            const bool tspConfirmVisibleV12
+                = tspConfirmV12 != nullptr
+                && tspConfirmV12->isVisible();
+
+            const std::string* tspNameV12
+                = sender != nullptr
+                ? sender->getUserData<std::string>(false)
+                : nullptr;
+
+            Log(Debug::Warning)
+                << "TSP_A_MAINMENU_RESULT_V12"
+                << " name=["
+                << (tspNameV12 != nullptr
+                        ? *tspNameV12
+                        : std::string("<none>"))
+                << "]"
+
+                << " activeWindow="
+                << static_cast<const void*>(tspActiveV12)
+
+                << " keyFocus="
+                << static_cast<const void*>(tspFocusV12)
+
+                << " focusType="
+                << (tspFocusV12 != nullptr
+                        ? tspFocusV12->getTypeName()
+                        : std::string("<none>"))
+
+                << " mainMenu="
+                << (tspWinMgrV12->containsMode(
+                        MWGui::GM_MainMenu)
+                    ? 1 : 0)
+
+                << " settings="
+                << (tspWinMgrV12->isSettingsWindowVisible()
+                    ? 1 : 0)
+
+                << " saveDialog="
+                << (tspSaveVisibleV12 ? 1 : 0)
+
+                << " confirmation="
+                << (tspConfirmVisibleV12 ? 1 : 0)
+
+                << " state="
+                << static_cast<int>(
+                       MWBase::Environment::get()
+                           .getStateManager()
+                           ->getState());
+        }
+}
 
     bool MainMenu::onControllerButtonEvent(const SDL_ControllerButtonEvent& arg)
     {
         if (arg.button == SDL_CONTROLLER_BUTTON_A)
         {
+
+            // TSP_A_MAINMENU_TARGET_051_V11
+            bool tspADebugMainV11 = false;
+
+            if (std::FILE* tspFlagV11
+                = std::fopen("/tmp/openmw-tsp-a-debug", "r"))
+            {
+                tspADebugMainV11 = true;
+                std::fclose(tspFlagV11);
+            }
+
+            if (tspADebugMainV11)
+            {
+                MyGUI::Widget* tspFocusV11
+                    = MyGUI::InputManager::getInstance()
+                          .getKeyFocusWidget();
+
+                Log(Debug::Warning)
+                    << "TSP_A_MAINMENU_TARGET_V11"
+                    << " focus="
+                    << static_cast<void*>(tspFocusV11)
+                    << " focusType="
+                    << (tspFocusV11 != nullptr
+                            ? tspFocusV11->getTypeName()
+                            : std::string("<none>"));
+            }
+
             // TSP_MAINMENU_ACTIVATE_051_V54 -- stock injected KeyCode::Space and
             // relied on MyGUI key focus already sitting on a menu button. When it
             // was anywhere else the press vanished silently: that is the

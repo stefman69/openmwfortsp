@@ -1,5 +1,7 @@
 #include "merchantrepair.hpp"
 
+#include <algorithm>
+#include <vector>
 #include <components/esm3/loadgmst.hpp>
 #include <components/settings/values.hpp>
 
@@ -26,6 +28,64 @@ namespace MWGui
         getWidget(mList, "RepairView");
         getWidget(mOkButton, "OkButton");
         getWidget(mGoldLabel, "PlayerGold");
+
+        // TSP_MERCHANT_REPAIR_POLISH_051_V2
+        //
+        // Give long item names + repair prices actual horizontal room.
+        // Keep all top-level layout relationships identical; only widen them.
+        {
+            // TSP_UI_POLISH_REFINEMENT_051_V3
+            // V2 still clipped prices after long equipment names.
+            constexpr int tspExtraWidth = 180;
+
+            MyGUI::Widget* tspFrame = mList->getParent();
+
+            if (tspFrame != nullptr)
+            {
+                std::vector<std::pair<MyGUI::Widget*, MyGUI::IntCoord>>
+                    tspRootCoords;
+
+                for (size_t i = 0;
+                     i < mMainWidget->getChildCount();
+                     ++i)
+                {
+                    MyGUI::Widget* child
+                        = mMainWidget->getChildAt(i);
+
+                    tspRootCoords.emplace_back(
+                        child, child->getCoord());
+                }
+
+                const MyGUI::IntCoord tspListCoord
+                    = mList->getCoord();
+
+                mMainWidget->setSize(
+                    mMainWidget->getWidth() + tspExtraWidth,
+                    mMainWidget->getHeight());
+
+                for (auto& entry : tspRootCoords)
+                {
+                    MyGUI::Widget* child = entry.first;
+                    MyGUI::IntCoord coord = entry.second;
+
+                    if (child == mOkButton)
+                        coord.left += tspExtraWidth;
+                    else
+                        coord.width += tspExtraWidth;
+
+                    child->setCoord(coord);
+                }
+
+                mList->setCoord(
+                    tspListCoord.left,
+                    tspListCoord.top,
+                    tspListCoord.width + tspExtraWidth,
+                    tspListCoord.height);
+            }
+
+            mMainWidget->setUserString(
+                "TSP_MERCHANT_REPAIR_POLISH_051_V2", "1");
+        }
 
         mOkButton->eventMouseButtonClick += MyGUI::newDelegate(this, &MerchantRepair::onOkButtonClick);
 
@@ -204,17 +264,39 @@ namespace MWGui
             mButtons[mControllerFocus].first->setStateSelected(true);
         }
 
-        // Scroll the list to keep the active item in view
+        // TSP_UI_POLISH_FINAL_051_V5
+        // This window visibly fits five complete entries. Calculate the
+        // selected row from the button's REAL Y coordinate because
+        // mButtons contains only affordable entries while the actual
+        // ScrollView may contain additional disabled rows.
         if (mControllerFocus < mButtons.size())
         {
-            size_t line = mButtons[mControllerFocus].second;
-            if (line <= 5)
-                mList->setViewOffset(MyGUI::IntPoint(0, 0));
-            else
-            {
-                const int lineHeight = Settings::gui().mFontSize + 2;
-                mList->setViewOffset(MyGUI::IntPoint(0, -lineHeight * static_cast<int>(line - 5)));
-            }
+            const int tspLineHeight
+                = std::max(
+                    1,
+                    Settings::gui().mFontSize.get() + 2);
+
+            constexpr int tspVisibleRows = 5;
+
+            MyGUI::Widget* tspFocused
+                = mButtons[mControllerFocus].first;
+
+            const int tspItemLine
+                = tspFocused != nullptr
+                ? std::max(
+                    0,
+                    tspFocused->getTop() / tspLineHeight)
+                : 0;
+
+            const int tspTopLine
+                = std::max(
+                    0,
+                    tspItemLine - (tspVisibleRows - 1));
+
+            mList->setViewOffset(
+                MyGUI::IntPoint(
+                    0,
+                    -tspLineHeight * tspTopLine));
         }
 
         return true;

@@ -3,6 +3,7 @@
 #include <MyGUI_Button.h>
 #include <MyGUI_EditBox.h>
 #include <MyGUI_InputManager.h>
+#include <MyGUI_ListBox.h>
 #include <MyGUI_ScrollView.h>
 
 #include <SDL.h>
@@ -32,6 +33,30 @@ namespace MWInput
 {
     namespace
     {
+        // TSP_A_FRAME_WATCH_STATE_V17
+        //
+        // Diagnostic only. Tracks:
+        //   - actual SDL controller A state edges;
+        //   - whether buttonPressed saw the same edge;
+        //   - the active GUI window for several frames after A.
+        int sTspAWatchFramesV17 = 0;
+        unsigned long long sTspAWatchSeqV17 = 0;
+        bool sTspAEventSeenV17 = false;
+        bool sTspAPollInitializedV17 = false;
+        bool sTspALastPolledV17 = false;
+
+        bool tspADebugGateV17()
+        {
+            if (std::FILE* tspFlagV17
+                = std::fopen("/tmp/openmw-tsp-a-debug", "r"))
+            {
+                std::fclose(tspFlagV17);
+                return true;
+            }
+
+            return false;
+        }
+
         // TSP_MOUSE_MODE_051_V41 -- longest gap between two MENU taps that still
         // counts as a double tap. Named constant so retuning is a one-token sed.
         constexpr unsigned int sTspMenuDoubleTapMs = 400;
@@ -223,6 +248,98 @@ namespace MWInput
 
     void ControllerManager::update(float dt)
     {
+        // TSP_A_POLLED_EDGE_V17
+        //
+        // SDL_GameControllerGetButton() is persistent state rather than
+        // an event-queue callback. If this changes to DOWN but
+        // buttonPressed() did not run, the press vanished between SDL's
+        // device state and ControllerManager event dispatch.
+        if (tspADebugGateV17())
+        {
+            const bool tspANowV17
+                = isButtonPressed(
+                    SDL_CONTROLLER_BUTTON_A);
+
+            if (!sTspAPollInitializedV17)
+            {
+                sTspAPollInitializedV17 = true;
+                sTspALastPolledV17 = tspANowV17;
+            }
+            else if (tspANowV17 != sTspALastPolledV17)
+            {
+                Log(Debug::Warning)
+                    << "TSP_A_POLLED_EDGE_V17"
+                    << " edge="
+                    << (tspANowV17 ? "down" : "up")
+                    << " ticks=" << SDL_GetTicks()
+                    << " controllerEventSeen="
+                    << (sTspAEventSeenV17 ? 1 : 0);
+
+                sTspALastPolledV17 = tspANowV17;
+            }
+
+            // TSP_A_POST_FRAME_V17
+            //
+            // Follow the destination for multiple rendered frames. The
+            // previous diagnostic only proved that the child existed
+            // immediately inside the click callback.
+            if (sTspAWatchFramesV17 > 0)
+            {
+                MWBase::WindowManager* tspWinMgrV17
+                    = MWBase::Environment::get()
+                          .getWindowManager();
+
+                MWGui::WindowBase* tspTopV17
+                    = tspWinMgrV17->isGuiMode()
+                    ? tspWinMgrV17
+                          ->getActiveControllerWindow()
+                    : nullptr;
+
+                const int tspFrameV17
+                    = 9 - sTspAWatchFramesV17;
+
+                Log(Debug::Warning)
+                    << "TSP_A_POST_FRAME_V17"
+                    << " watchSeq="
+                    << sTspAWatchSeqV17
+                    << " frame=" << tspFrameV17
+                    << " ticks=" << SDL_GetTicks()
+                    << " gui="
+                    << (tspWinMgrV17->isGuiMode()
+                            ? 1
+                            : 0)
+                    << " top="
+                    << static_cast<const void*>(
+                           tspTopV17)
+                    << " topVisible="
+                    << (tspTopV17 != nullptr
+                            && tspTopV17->isVisible()
+                            ? 1
+                            : 0)
+                    << " modal="
+                    << (MyGUI::InputManager::getInstance()
+                                .isModalAny()
+                            ? 1
+                            : 0)
+                    << " settings="
+                    << (tspWinMgrV17
+                                ->isSettingsWindowVisible()
+                            ? 1
+                            : 0)
+                    << " textInput="
+                    << (SDL_IsTextInputActive()
+                                == SDL_TRUE
+                            ? 1
+                            : 0)
+                    << " aState="
+                    << (tspANowV17 ? 1 : 0);
+
+                --sTspAWatchFramesV17;
+            }
+        }
+
+        // The next update corresponds to the next SDL capture cycle.
+        sTspAEventSeenV17 = false;
         // TSP_CHORD_051_V43 -- belt and braces: if we think MENU is held but SDL
         // says the physical button is up, we missed a release.
         //
@@ -307,7 +424,12 @@ namespace MWInput
         MWBase::WindowManager* tspDialogueScrollWinMgrV35
             = MWBase::Environment::get().getWindowManager();
 
+        // TSP_MOUSEMODE_SINGLE_SCROLL_OWNER_051_V9
+        //
+        // Native controller mode keeps the dedicated RS dialogue scroll.
+        // TSP mouse mode uses the later pointer-based RS wheel route only.
         if (Settings::gui().mControllerMenus
+            && !tspMouseUsableNow()
             && tspDialogueScrollWinMgrV35->isGuiMode())
         {
             MWGui::WindowBase* tspDialogueScrollTopWinV35
@@ -514,10 +636,140 @@ namespace MWInput
                 MWBase::Environment::get().getInputManager()->resetIdleTime();
             }
         }
-    }
+    
+        // TSP_FINAL_UI_REPEAT_051_V1
+        //
+        // Controller menus which implement their own focus navigation receive
+        // only the initial SDL controller-button press. Add desktop-like held
+        // D-pad repeat here:
+        //   immediate initial press -> existing buttonPressed path
+        //   350 ms hold delay
+        //   repeat every 90 ms
+        //
+        // A focused MyGUI ListBox is deliberately excluded. Those widgets
+        // already implement keyboard/list repeat (notably Save/Load), and
+        // injecting a second repeat stream would make them skip entries.
+        {
+            constexpr Uint32 tspRepeatDelayMs = 350;
+            constexpr Uint32 tspRepeatIntervalMs = 90;
+
+            static int tspRepeatButton = -1;
+            static Uint32 tspRepeatStartMs = 0;
+            static Uint32 tspRepeatLastMs = 0;
+
+            const auto tspResetRepeat = [&]() {
+                tspRepeatButton = -1;
+                tspRepeatStartMs = 0;
+                tspRepeatLastMs = 0;
+            };
+
+            MWBase::WindowManager* tspRepeatWin
+                = MWBase::Environment::get().getWindowManager();
+
+            bool tspNativeListOwnsRepeat = false;
+
+            for (MyGUI::Widget* tspFocus
+                     = MyGUI::InputManager::getInstance().getKeyFocusWidget();
+                 tspFocus != nullptr;
+                 tspFocus = tspFocus->getParent())
+            {
+                if (tspFocus->castType<MyGUI::ListBox>(false) != nullptr)
+                {
+                    tspNativeListOwnsRepeat = true;
+                    break;
+                }
+            }
+
+            const bool tspAllowRepeat
+                = Settings::input().mEnableController
+                && Settings::gui().mControllerMenus
+                && tspRepeatWin->isGuiMode()
+                && !mTspMenuHeld
+                && !tspMouseUsableNow()
+                && !tspNativeListOwnsRepeat
+                && !(SDL_IsTextInputActive() && !tspTextSuppressed());
+
+            if (!tspAllowRepeat)
+            {
+                tspResetRepeat();
+            }
+            else
+            {
+                int tspHeld = -1;
+
+                constexpr SDL_GameControllerButton tspButtons[] = {
+                    SDL_CONTROLLER_BUTTON_DPAD_UP,
+                    SDL_CONTROLLER_BUTTON_DPAD_DOWN,
+                    SDL_CONTROLLER_BUTTON_DPAD_LEFT,
+                    SDL_CONTROLLER_BUTTON_DPAD_RIGHT,
+                };
+
+                for (SDL_GameControllerButton tspButton : tspButtons)
+                {
+                    if (isButtonPressed(tspButton))
+                    {
+                        tspHeld = static_cast<int>(tspButton);
+                        break;
+                    }
+                }
+
+                const Uint32 tspNow = SDL_GetTicks();
+
+                if (tspHeld < 0)
+                {
+                    tspResetRepeat();
+                }
+                else if (tspHeld != tspRepeatButton)
+                {
+                    tspRepeatButton = tspHeld;
+                    tspRepeatStartMs = tspNow;
+                    tspRepeatLastMs = tspNow;
+                }
+                else if ((tspNow - tspRepeatStartMs) >= tspRepeatDelayMs
+                    && (tspNow - tspRepeatLastMs) >= tspRepeatIntervalMs)
+                {
+                    SDL_ControllerButtonEvent tspRepeatEvent{};
+                    tspRepeatEvent.type = SDL_CONTROLLERBUTTONDOWN;
+                    tspRepeatEvent.timestamp = tspNow;
+                    tspRepeatEvent.button
+                        = static_cast<Uint8>(tspRepeatButton);
+                    tspRepeatEvent.state = SDL_PRESSED;
+
+                    if (tspRepeatLastMs == tspRepeatStartMs)
+                    {
+                        Log(Debug::Info)
+                            << "TSP_FINAL_UI_REPEAT_051_V1 hold-repeat-start"
+                            << " button=" << tspRepeatButton;
+                    }
+
+                    gamepadToGuiControl(tspRepeatEvent);
+                    tspRepeatLastMs = tspNow;
+                }
+            }
+        }
+
+}
 
     void ControllerManager::buttonPressed(int deviceID, const SDL_ControllerButtonEvent& arg)
     {
+        // TSP_A_CONTROLLER_ENTRY_V17
+        if (arg.button == SDL_CONTROLLER_BUTTON_A
+            && tspADebugGateV17())
+        {
+            ++sTspAWatchSeqV17;
+            sTspAWatchFramesV17 = 8;
+            sTspAEventSeenV17 = true;
+
+            Log(Debug::Warning)
+                << "TSP_A_CONTROLLER_ENTRY_V17"
+                << " watchSeq=" << sTspAWatchSeqV17
+                << " ticks=" << SDL_GetTicks()
+                << " state="
+                << (isButtonPressed(
+                        SDL_CONTROLLER_BUTTON_A)
+                        ? 1
+                        : 0);
+        }
         // TSP_MOUSE_MODE_051_V41 -- V39's per-button trace removed; it fired on
         // every press in the input hot path. The ctor mapping dump stays.
         if (!Settings::input().mEnableController || mBindingsManager->isDetectingBindingState())
@@ -527,6 +779,47 @@ namespace MWInput
             { MWBase::LuaManager::InputEvent::ControllerPressed, arg.button });
 
         mJoystickLastUsed = true;
+
+        // TSP_A_RAW_DEBUG_V10
+        // Diagnostic only. No A-button behavior is changed here.
+        // TSP_A_DEBUG_GATE_RAW_051_V11
+        bool tspARawDebugV11 = false;
+
+        if (std::FILE* tspFlagV11
+            = std::fopen("/tmp/openmw-tsp-a-debug", "r"))
+        {
+            tspARawDebugV11 = true;
+            std::fclose(tspFlagV11);
+        }
+
+        if (tspARawDebugV11
+            && arg.button == SDL_CONTROLLER_BUTTON_A)
+        {
+            static unsigned long long tspARawSequenceV10 = 0;
+            ++tspARawSequenceV10;
+
+            MWBase::WindowManager* tspADebugWinMgrV10
+                = MWBase::Environment::get().getWindowManager();
+
+            Log(Debug::Warning)
+                << "TSP_A_RAW_DEBUG_V10"
+                << " seq=" << tspARawSequenceV10
+                << " ticks=" << SDL_GetTicks()
+                << " gui="
+                << (tspADebugWinMgrV10->isGuiMode() ? 1 : 0)
+                << " mouseUsable="
+                << (tspMouseUsableNow() ? 1 : 0)
+                << " textInput="
+                << (SDL_IsTextInputActive() == SDL_TRUE ? 1 : 0)
+                << " cursorVisible="
+                << (tspADebugWinMgrV10->getCursorVisible() ? 1 : 0)
+                << " gamepadCursor="
+                << (mGamepadGuiCursorEnabled ? 1 : 0)
+                << " activeWindow="
+                << static_cast<const void*>(
+                       tspADebugWinMgrV10
+                           ->getActiveControllerWindow());
+        }
 
         // TSP_MOUSE_MODE_051_V38
         // The TSP MENU button (physical BTN_MODE / js b8, mapped as guide:b8) is
@@ -931,7 +1224,18 @@ namespace MWInput
 
                 // TSP_A_DOUBLE_PRESS_051_V53 -- measurement only. If a double
                 // press is ever seen again, this names the branch that took it.
-                if (arg.button == SDL_CONTROLLER_BUTTON_A)
+                // TSP_A_DEBUG_GATE_ROUTE_051_V11
+                bool tspARouteDebugV11 = false;
+
+                if (std::FILE* tspFlagV11
+                    = std::fopen("/tmp/openmw-tsp-a-debug", "r"))
+                {
+                    tspARouteDebugV11 = true;
+                    std::fclose(tspFlagV11);
+                }
+
+                if (tspARouteDebugV11
+                    && arg.button == SDL_CONTROLLER_BUTTON_A)
                 {
                     Log(Debug::Info)
                         << "TSP_A_DOUBLE_PRESS_051_V53 a=press"

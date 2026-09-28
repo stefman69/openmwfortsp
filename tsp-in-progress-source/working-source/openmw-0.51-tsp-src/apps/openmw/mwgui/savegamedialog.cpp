@@ -1,3 +1,4 @@
+#include <cstdio>
 #include "savegamedialog.hpp"
 
 #include <iomanip>
@@ -276,6 +277,17 @@ namespace MWGui
 
     void SaveGameDialog::onCancelButtonClicked(MyGUI::Widget* /*sender*/)
     {
+
+        // TSP_A_SAVE_CANCEL_V16
+        if (std::FILE* tspFlagV16
+            = std::fopen("/tmp/openmw-tsp-a-debug", "r"))
+        {
+            std::fclose(tspFlagV16);
+
+            Log(Debug::Warning)
+                << "TSP_A_SAVE_CANCEL_V16";
+        }
+
         setVisible(false);
     }
 
@@ -297,6 +309,23 @@ namespace MWGui
 
     void SaveGameDialog::accept(bool reallySure)
     {
+
+        // TSP_A_SAVE_ACCEPT_V16
+        if (std::FILE* tspFlagV16
+            = std::fopen("/tmp/openmw-tsp-a-debug", "r"))
+        {
+            std::fclose(tspFlagV16);
+
+            Log(Debug::Warning)
+                << "TSP_A_SAVE_ACCEPT_V16"
+                << " saving="
+                << (mSaving ? 1 : 0)
+                << " sure="
+                << (reallySure ? 1 : 0)
+                << " currentSlot="
+                << (mCurrentSlot != nullptr ? 1 : 0);
+        }
+
         if (mSaving)
         {
             // If overwriting an existing slot, ask for confirmation first
@@ -355,6 +384,21 @@ namespace MWGui
 
     void SaveGameDialog::onOkButtonClicked(MyGUI::Widget* /*sender*/)
     {
+
+        // TSP_A_SAVE_OK_V16
+        if (std::FILE* tspFlagV16
+            = std::fopen("/tmp/openmw-tsp-a-debug", "r"))
+        {
+            std::fclose(tspFlagV16);
+
+            Log(Debug::Warning)
+                << "TSP_A_SAVE_OK_V16"
+                << " saving="
+                << (mSaving ? 1 : 0)
+                << " currentSlot="
+                << (mCurrentSlot != nullptr ? 1 : 0);
+        }
+
         accept();
     }
 
@@ -537,6 +581,25 @@ namespace MWGui
     {
         if (arg.button == SDL_CONTROLLER_BUTTON_A)
         {
+
+            // TSP_A_SAVE_CHILD_V16
+            if (std::FILE* tspFlagV16
+                = std::fopen("/tmp/openmw-tsp-a-debug", "r"))
+            {
+                std::fclose(tspFlagV16);
+
+                Log(Debug::Warning)
+                    << "TSP_A_SAVE_CHILD_V16"
+                    << " saving="
+                    << (mSaving ? 1 : 0)
+                    << " okFocus="
+                    << (mOkButtonFocus ? 1 : 0)
+                    << " selected="
+                    << mSaveList->getIndexSelected()
+                    << " currentSlot="
+                    << (mCurrentSlot != nullptr ? 1 : 0);
+            }
+
             if (mOkButtonFocus)
                 onOkButtonClicked(mOkButton);
             else
@@ -566,6 +629,24 @@ namespace MWGui
             MWBase::WindowManager* winMgr = MWBase::Environment::get().getWindowManager();
             winMgr->setKeyFocusWidget(mSaveList);
             winMgr->injectKeyPress(MyGUI::KeyCode::ArrowDown, 0, false);
+        }
+        else if (arg.button == SDL_CONTROLLER_BUTTON_LEFTSHOULDER
+            || arg.button == SDL_CONTROLLER_BUTTON_RIGHTSHOULDER)
+        {
+            // TSP_SAVELOAD_SHOULDER_PAGE_051_V1
+            // The save/load ListBox already owns held Up/Down repeat.
+            // Shoulders simply use MyGUI's native page navigation.
+            MWBase::WindowManager* winMgr
+                = MWBase::Environment::get().getWindowManager();
+
+            winMgr->setKeyFocusWidget(mSaveList);
+
+            winMgr->injectKeyPress(
+                arg.button == SDL_CONTROLLER_BUTTON_LEFTSHOULDER
+                    ? MyGUI::KeyCode::PageUp
+                    : MyGUI::KeyCode::PageDown,
+                0,
+                false);
         }
         else if ((arg.button == SDL_CONTROLLER_BUTTON_DPAD_LEFT && !mOkButtonFocus)
             || (arg.button == SDL_CONTROLLER_BUTTON_DPAD_RIGHT && mOkButtonFocus))

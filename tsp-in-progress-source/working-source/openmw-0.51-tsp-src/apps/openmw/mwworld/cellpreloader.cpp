@@ -2,8 +2,15 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
+#include <cstdint>
+#include <cstdlib>
 #include <limits>
 #include <span>
+
+#if defined(__linux__) && defined(__GLIBC__)
+#include <malloc.h>
+#endif
 
 #include <osg/Stats>
 
@@ -47,6 +54,34 @@ namespace MWWorld
         {
             const auto predicate = [&](const PositionCellGrid& v) { return contains(container, v, tolerance); };
             return std::ranges::all_of(contained, predicate);
+        }
+
+        // TSP_BGALLOC_V1
+        bool tspBgAllocEnabled()
+        {
+            static const bool enabled = [] {
+                const char* value = std::getenv("TSP_BGALLOC");
+                return value != nullptr && value[0] == '1';
+            }();
+
+            return enabled;
+        }
+
+        std::int64_t tspBgAllocInUse()
+        {
+#if defined(__linux__) && defined(__GLIBC__)
+            const struct mallinfo info = ::mallinfo();
+            return static_cast<std::int64_t>(info.uordblks);
+#else
+            return -1;
+#endif
+        }
+
+        std::int64_t tspBgAllocElapsedMs(
+            const std::chrono::steady_clock::time_point& start)
+        {
+            return std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - start).count();
         }
     }
 
@@ -92,6 +127,11 @@ namespace MWWorld
         /// Preload work to be called from the worker thread.
         void doWork() override
         {
+            const bool tspDiag = tspBgAllocEnabled();
+            const auto tspStart = std::chrono::steady_clock::now();
+            const std::int64_t tspBefore
+                = tspDiag ? tspBgAllocInUse() : -1;
+
             if (mIsExterior)
             {
                 try
@@ -144,6 +184,22 @@ namespace MWWorld
                                         << e.what();
                 }
             }
+
+            if (tspDiag)
+            {
+                const std::int64_t tspAfter = tspBgAllocInUse();
+
+                Log(Debug::Info)
+                    << "[TSP_BGALLOC_V1]"
+                    << " kind=cell_preload"
+                    << " cell=" << mCellId
+                    << " meshes=" << mMeshes.size()
+                    << " held_objects=" << mPreloadedObjects.size()
+                    << " elapsed_ms=" << tspBgAllocElapsedMs(tspStart)
+                    << " inuse_before=" << tspBefore
+                    << " inuse_after=" << tspAfter
+                    << " delta=" << (tspAfter - tspBefore);
+            }
         }
 
     private:
@@ -180,16 +236,45 @@ namespace MWWorld
 
         void doWork() override
         {
+            const bool tspDiag = tspBgAllocEnabled();
+            const auto tspStart = std::chrono::steady_clock::now();
+            const std::int64_t tspBefore
+                = tspDiag ? tspBgAllocInUse() : -1;
+
             for (unsigned int i = 0; i < mTerrainViews.size() && i < mPreloadPositions.size() && !mAbort; ++i)
             {
                 mTerrainViews[i]->reset();
                 mWorld->preload(mTerrainViews[i], mPreloadPositions[i].mPosition, mPreloadPositions[i].mCellBounds,
                     mAbort, mLoadingReporter);
             }
+
             mLoadingReporter.complete();
+
+            if (tspDiag)
+            {
+                const std::int64_t tspAfter = tspBgAllocInUse();
+
+                Log(Debug::Info)
+                    << "[TSP_BGALLOC_V1]"
+                    << " kind=terrain_preload"
+                    << " positions=" << mPreloadPositions.size()
+                    << " elapsed_ms=" << tspBgAllocElapsedMs(tspStart)
+                    << " inuse_before=" << tspBefore
+                    << " inuse_after=" << tspAfter
+                    << " delta=" << (tspAfter - tspBefore);
+            }
         }
 
         void abort() override { mAbort = true; }
+
+        // TSP_TERRAIN_VIEW_RELEASE_V1
+        // Once the preload has completed, the generated terrain/object chunks
+        // remain owned by their normal ResourceSystem caches. The temporary
+        // preload ViewData scene graphs no longer need to remain resident.
+        std::vector<osg::ref_ptr<Terrain::View>> takeViews()
+        {
+            return std::move(mTerrainViews);
+        }
 
         void wait(Loading::Listener& listener) const { mLoadingReporter.wait(listener); }
 
@@ -199,6 +284,27 @@ namespace MWWorld
         Terrain::World* mWorld;
         std::vector<PositionCellGrid> mPreloadPositions;
         Loading::Reporter mLoadingReporter;
+    };
+
+    // TSP_TERRAIN_VIEW_RELEASE_V1
+    // Release completed terrain preload view graphs on a worker thread.
+    // Their underlying terrain/object chunks remain in their normal caches.
+    class ReleaseTerrainViewsItem : public SceneUtil::WorkItem
+    {
+    public:
+        explicit ReleaseTerrainViewsItem(
+            std::vector<osg::ref_ptr<Terrain::View>> views)
+            : mViews(std::move(views))
+        {
+        }
+
+        void doWork() override
+        {
+            mViews.clear();
+        }
+
+    private:
+        std::vector<osg::ref_ptr<Terrain::View>> mViews;
     };
 
     /// Worker thread item: update the resource system's cache, effectively deleting unused entries.
@@ -211,7 +317,33 @@ namespace MWWorld
         {
         }
 
-        void doWork() override { mResourceSystem->updateCache(mReferenceTime); }
+        void doWork() override
+        {
+            const bool tspDiag = tspBgAllocEnabled();
+            const auto tspStart = std::chrono::steady_clock::now();
+            const std::int64_t tspBefore
+                = tspDiag ? tspBgAllocInUse() : -1;
+
+            mResourceSystem->updateCache(mReferenceTime);
+
+            if (tspDiag)
+            {
+                const std::int64_t tspAfter = tspBgAllocInUse();
+                const std::int64_t tspDelta = tspAfter - tspBefore;
+                const std::int64_t tspMs = tspBgAllocElapsedMs(tspStart);
+
+                if (tspDelta >= 65536 || tspDelta <= -65536 || tspMs >= 20)
+                {
+                    Log(Debug::Info)
+                        << "[TSP_BGALLOC_V1]"
+                        << " kind=resource_update"
+                        << " elapsed_ms=" << tspMs
+                        << " inuse_before=" << tspBefore
+                        << " inuse_after=" << tspAfter
+                        << " delta=" << tspDelta;
+                }
+            }
+        }
 
     private:
         double mReferenceTime;
@@ -351,6 +483,37 @@ namespace MWWorld
         {
             mLoadedTerrainPositions = mTerrainPreloadPositions;
             mLoadedTerrainTimestamp = timestamp;
+
+            // TSP_TERRAIN_VIEW_RELEASE_V1
+            //
+            // The expensive chunk nodes created by preload() are already in
+            // ChunkManager/ObjectPaging/Groundcover caches. Keeping the
+            // independent preload ViewData graphs as well only adds another
+            // strong-reference tree.
+            //
+            // Move the final view refs to a worker so releasing a large view
+            // cannot create a destructor hitch on the gameplay thread.
+            auto tspFinishedViews = mTerrainPreloadItem->takeViews();
+
+            // TSP_TERRAIN_VIEW_KEEPDONE_V2
+            //
+            // Keep the completed WorkItem object alive. The original
+            // CellPreloader logic intentionally leaves a completed item here,
+            // which refreshes mLoadedTerrainTimestamp on later updateCache()
+            // calls until a genuinely different terrain target replaces it.
+            //
+            // Its heavy ViewData refs have already been moved out by
+            // takeViews(), so retaining this tiny completed WorkItem does NOT
+            // retain the preload scene graphs.
+            mTerrainViews.clear();
+
+            if (!tspFinishedViews.empty())
+            {
+                osg::ref_ptr<ReleaseTerrainViewsItem> tspRelease
+                    = new ReleaseTerrainViewsItem(std::move(tspFinishedViews));
+
+                mWorkQueue->addWorkItem(tspRelease, true);
+            }
         }
     }
 

@@ -5,8 +5,6 @@
 
 #include <cstdio>
 
-#include <SDL.h>
-
 #include <osgViewer/Viewer>
 
 namespace SDLUtil

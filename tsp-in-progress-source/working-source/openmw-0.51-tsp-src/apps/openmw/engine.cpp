@@ -1247,8 +1247,11 @@ void OMW::Engine::prepareEngine()
     mResourceSystem = std::make_unique<Resource::ResourceSystem>(
         mVFS.get(), Settings::cells().mCacheExpiryDelay, &mEncoder.get()->getStatelessEncoder());
     mResourceSystem->getSceneManager()->getShaderManager().setMaxTextureUnits(mGlMaxTextureImageUnits);
-    mResourceSystem->getSceneManager()->setUnRefImageDataAfterApply(
-        false); // keep to Off for now to allow better state sharing
+    // TSP_TEXTURE_CPU_RELEASE_V1
+    // This device cannot afford to retain both the GL texture and the CPU
+    // source image for every streamed/preloaded texture. OSG only unreferences
+    // static image data after the texture is safely resident in all contexts.
+    mResourceSystem->getSceneManager()->setUnRefImageDataAfterApply(true);
     mResourceSystem->getSceneManager()->setFilterSettings(Settings::general().mTextureMagFilter,
         Settings::general().mTextureMinFilter, Settings::general().mTextureMipmap,
         static_cast<float>(Settings::general().mAnisotropy));

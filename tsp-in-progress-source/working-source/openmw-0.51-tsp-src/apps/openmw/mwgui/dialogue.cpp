@@ -1,3 +1,4 @@
+#include <cstdio>
 #include "dialogue.hpp"
 
 #include <MyGUI_Button.h>
@@ -436,6 +437,31 @@ namespace MWGui
 
     void DialogueWindow::onSelectListItem(const std::string& topic, int /*id*/)
     {
+
+        // TSP_A_DIALOGUE_SELECT_051_V11
+        bool tspADebugSelectV11 = false;
+
+        if (std::FILE* tspFlagV11
+            = std::fopen("/tmp/openmw-tsp-a-debug", "r"))
+        {
+            tspADebugSelectV11 = true;
+            std::fclose(tspFlagV11);
+        }
+
+        if (tspADebugSelectV11)
+        {
+            Log(Debug::Warning)
+                << "TSP_A_DIALOGUE_SELECT_V11"
+                << " topic=[" << topic << "]"
+                << " goodbye=" << (mGoodbye ? 1 : 0)
+                << " inChoice="
+                << (MWBase::Environment::get()
+                        .getDialogueManager()
+                        ->isInChoice()
+                    ? 1
+                    : 0);
+        }
+
         MWBase::DialogueManager* dialogueManager = MWBase::Environment::get().getDialogueManager();
 
         if (mGoodbye || dialogueManager->isInChoice())
@@ -492,7 +518,80 @@ namespace MWGui
         }
         else
             updateTopics();
-    }
+    
+
+        // TSP_A_DIALOGUE_RESULT_V12
+        //
+        // Diagnostic only. At this point the selected topic/service has
+        // already run through the normal DialogueWindow logic.
+        if (std::FILE* tspFlagV12
+            = std::fopen("/tmp/openmw-tsp-a-debug", "r"))
+        {
+            std::fclose(tspFlagV12);
+
+            MWBase::WindowManager* tspWinMgrV12
+                = MWBase::Environment::get().getWindowManager();
+
+            MWGui::WindowBase* tspActiveV12
+                = tspWinMgrV12->getActiveControllerWindow();
+
+            Log(Debug::Warning)
+                << "TSP_A_DIALOGUE_RESULT_V12"
+                << " topic=[" << topic << "]"
+
+                << " activeWindow="
+                << static_cast<const void*>(tspActiveV12)
+
+                << " dialogue="
+                << (tspWinMgrV12->containsMode(
+                        MWGui::GM_Dialogue)
+                    ? 1 : 0)
+
+                << " spellbuy="
+                << (tspWinMgrV12->containsMode(
+                        MWGui::GM_SpellBuying)
+                    ? 1 : 0)
+
+                << " spellmake="
+                << (tspWinMgrV12->containsMode(
+                        MWGui::GM_SpellCreation)
+                    ? 1 : 0)
+
+                << " training="
+                << (tspWinMgrV12->containsMode(
+                        MWGui::GM_Training)
+                    ? 1 : 0)
+
+                << " repair="
+                << (tspWinMgrV12->containsMode(
+                        MWGui::GM_MerchantRepair)
+                    ? 1 : 0)
+
+                << " barter="
+                << (tspWinMgrV12->containsMode(
+                        MWGui::GM_Barter)
+                    ? 1 : 0)
+
+                << " travel="
+                << (tspWinMgrV12->containsMode(
+                        MWGui::GM_Travel)
+                    ? 1 : 0)
+
+                << " enchanting="
+                << (tspWinMgrV12->containsMode(
+                        MWGui::GM_Enchanting)
+                    ? 1 : 0)
+
+                << " companion="
+                << (tspWinMgrV12->containsMode(
+                        MWGui::GM_Companion)
+                    ? 1 : 0)
+
+                << " persuasionVisible="
+                << (mPersuasionDialog.isVisible()
+                    ? 1 : 0);
+        }
+}
 
     void DialogueWindow::setPtr(const MWWorld::Ptr& actor)
     {
@@ -962,6 +1061,44 @@ namespace MWGui
     {
         if (arg.button == SDL_CONTROLLER_BUTTON_A)
         {
+
+            // TSP_A_DIALOGUE_TARGET_051_V11
+            bool tspADebugV11 = false;
+
+            if (std::FILE* tspFlagV11
+                = std::fopen("/tmp/openmw-tsp-a-debug", "r"))
+            {
+                tspADebugV11 = true;
+                std::fclose(tspFlagV11);
+            }
+
+            if (tspADebugV11)
+            {
+                std::string tspTopicV11 = "<none>";
+
+                if (mControllerFocus < mTopicsList->getItemCount())
+                {
+                    tspTopicV11
+                        = mTopicsList->getItemNameAt(
+                            mControllerFocus);
+                }
+                else if (
+                    mControllerFocus
+                    == mTopicsList->getItemCount())
+                {
+                    tspTopicV11 = "<goodbye>";
+                }
+
+                Log(Debug::Warning)
+                    << "TSP_A_DIALOGUE_TARGET_V11"
+                    << " focus=" << mControllerFocus
+                    << " items="
+                    << mTopicsList->getItemCount()
+                    << " choices=" << mChoices.size()
+                    << " goodbye=" << (mGoodbye ? 1 : 0)
+                    << " topic=[" << tspTopicV11 << "]";
+            }
+
             if (mChoices.size() > 0)
             {
                 if (mChoices.size() == 1)

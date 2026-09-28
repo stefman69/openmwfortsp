@@ -1,5 +1,6 @@
 #include "itemchargeview.hpp"
 
+#include <algorithm>
 #include <SDL_gamecontroller.h>
 #include <set>
 
@@ -45,6 +46,8 @@ namespace MWGui
             throw std::runtime_error("Item charge view needs a scroll view");
 
         mScrollView->setCanvasAlign(MyGUI::Align::Left | MyGUI::Align::Top);
+        mScrollView->setUserString(
+            "TSP_HAMMER_REPAIR_FONT_051_V2", "1");
     }
 
     void ItemChargeView::setModel(ItemModel* model)
@@ -145,6 +148,17 @@ namespace MWGui
 
         for (Line& line : mLines)
         {
+            // TSP_HAMMER_REPAIR_FONT_051_V2
+            //
+            // The repair-hammer list uses an 18px-high text row. Keep the
+            // larger global TSP UI font everywhere else, but cap this one
+            // health/repair list at 17px so names fit the existing row.
+            if (mDisplayMode == DisplayMode_Health)
+                line.mText->setFontHeight(
+                    std::min(17, Settings::gui().mFontSize.get()));
+            else
+                line.mText->setFontHeight(0);
+
             line.mText->setCoord(8, currentY, mScrollView->getWidth() - 8, 18);
             currentY += 19;
 
@@ -254,6 +268,50 @@ namespace MWGui
             mControllerFocus = wrap(mControllerFocus, mLines.size(), -1);
         else if (button == SDL_CONTROLLER_BUTTON_DPAD_DOWN)
             mControllerFocus = wrap(mControllerFocus, mLines.size(), 1);
+        else if (button == SDL_CONTROLLER_BUTTON_LEFTSHOULDER
+            || button == SDL_CONTROLLER_BUTTON_RIGHTSHOULDER)
+        {
+            // TSP_ITEMCHARGE_VISIBLE_PAGE_051_V1
+            // Page by the number of complete rows that actually fit in the
+            // current viewport instead of assuming a stock font/row count.
+            const int tspViewHeight
+                = std::max(1, mScrollView->getViewCoord().height);
+
+            int tspRowStep = 55;
+
+            if (mLines.size() > 1)
+            {
+                tspRowStep
+                    = mLines[1].mText->getTop()
+                    - mLines[0].mText->getTop();
+            }
+
+            if (tspRowStep <= 0)
+            {
+                tspRowStep = std::max(
+                    1,
+                    std::max(
+                        mLines[mControllerFocus].mText->getHeight(),
+                        mLines[mControllerFocus].mIcon->getHeight() + 4));
+            }
+
+            const size_t tspPage = static_cast<size_t>(
+                std::max(1, tspViewHeight / tspRowStep));
+
+            if (button == SDL_CONTROLLER_BUTTON_LEFTSHOULDER)
+            {
+                if (mControllerFocus > tspPage)
+                    mControllerFocus -= tspPage;
+                else
+                    mControllerFocus = 0;
+            }
+            else
+            {
+                mControllerFocus = std::min(
+                    mLines.size() - 1,
+                    mControllerFocus + tspPage);
+            }
+        }
 
         if (prevFocus != mControllerFocus)
             updateControllerFocus(prevFocus, mControllerFocus);
@@ -277,11 +335,45 @@ namespace MWGui
             mLines[newFocus].mText->setTextColour(textColours.link);
             mLines[newFocus].mIcon->setControllerFocus(true);
 
-            // Scroll the list to keep the active item in view
-            if (newFocus <= 3)
-                mScrollView->setViewOffset(MyGUI::IntPoint(0, 0));
-            else
-                mScrollView->setViewOffset(MyGUI::IntPoint(0, -55 * static_cast<int>(newFocus - 3)));
+            // TSP_ITEMCHARGE_VISIBLE_PAGE_051_V1
+            // Keep the full selected repair/recharge row inside the actual
+            // viewport. The old <=3 / 55px calculation was one row wrong
+            // after the TSP font increase.
+            const int tspViewHeight
+                = mScrollView->getViewCoord().height;
+
+            if (tspViewHeight > 0)
+            {
+                const int tspCurrentTop
+                    = std::max(0, -mScrollView->getViewOffset().top);
+
+                const int tspItemTop = std::min(
+                    mLines[newFocus].mText->getTop(),
+                    mLines[newFocus].mIcon->getTop());
+
+                const int tspItemBottom = std::max(
+                    mLines[newFocus].mText->getTop()
+                        + mLines[newFocus].mText->getHeight(),
+                    mLines[newFocus].mIcon->getTop()
+                        + mLines[newFocus].mIcon->getHeight() + 4);
+
+                int tspNewTop = tspCurrentTop;
+
+                if (tspItemTop < tspCurrentTop)
+                    tspNewTop = tspItemTop;
+                else if (tspItemBottom > tspCurrentTop + tspViewHeight)
+                    tspNewTop = tspItemBottom - tspViewHeight;
+
+                const int tspMaxTop = std::max(
+                    0,
+                    mScrollView->getCanvasSize().height - tspViewHeight);
+
+                tspNewTop = std::clamp(
+                    tspNewTop, 0, tspMaxTop);
+
+                mScrollView->setViewOffset(
+                    MyGUI::IntPoint(0, -tspNewTop));
+            }
         }
     }
 }

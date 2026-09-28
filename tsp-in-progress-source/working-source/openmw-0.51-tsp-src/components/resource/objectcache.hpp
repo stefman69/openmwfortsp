@@ -27,13 +27,24 @@
 #include <osg/ref_ptr>
 
 #include <algorithm>
+#include <atomic>
+#include <chrono>
+#include <condition_variable>
 #include <cstddef>
 #include <cstdlib>
+#include <deque>
 #include <map>
 #include <mutex>
 #include <optional>
 #include <string>
+#include <thread>
 #include <vector>
+
+#if defined(__linux__)
+#include <unistd.h>
+#endif
+
+#include <components/debug/debuglog.hpp>
 
 namespace osg
 {
@@ -51,19 +62,163 @@ namespace Resource
         double mLastUsage;
     };
 
- // TSP_EXPIRY_BUDGET_V1
-    // Objects per updateCache() call to actually destroy. 0 = original
-    // all-at-once behaviour. Read once, from TSP_EXPIRY_BUDGET.
-    inline std::size_t tspExpiryBudget()
+    // TSP_ASYNC_RECLAIM_V1
+    //
+    // GenericObjectCache already knows whether a resource is truly unused:
+    // its cache reference is the only reference and mLastUsage is older than
+    // the configured expiry delay.
+    //
+    // The previous TSP expiry-budget patch removed those entries from the
+    // cache but retained their ref_ptrs in mTspPending. That traded a frame
+    // hitch for retained RAM.
+    //
+    // This reclaimer preserves the existing expiry semantics and preloader.
+    // Truly expired objects are removed immediately from the cache, then their
+    // final ref is released on a low-priority background thread one object at
+    // a time. Nothing that is active or held by the preloader can enter here.
+
+    class TspAsyncObjectReclaimer
     {
-        static const std::size_t sTspBudget = []() -> std::size_t {
-            const char* tspEnv = std::getenv("TSP_EXPIRY_BUDGET");
-            if (tspEnv == nullptr || tspEnv[0] == '\0')
-                return 16;
-            const long tspVal = std::atol(tspEnv);
-            return tspVal > 0 ? static_cast<std::size_t>(tspVal) : 0;
-        }();
-        return sTspBudget;
+    public:
+        TspAsyncObjectReclaimer()
+            : mThread([this] { run(); })
+        {
+        }
+
+        ~TspAsyncObjectReclaimer()
+        {
+            {
+                std::lock_guard<std::mutex> lock(mMutex);
+                mStop = true;
+            }
+
+            mCondition.notify_all();
+
+            if (mThread.joinable())
+                mThread.join();
+        }
+
+        TspAsyncObjectReclaimer(const TspAsyncObjectReclaimer&) = delete;
+        TspAsyncObjectReclaimer& operator=(
+            const TspAsyncObjectReclaimer&) = delete;
+
+        void enqueue(std::vector<osg::ref_ptr<osg::Object>>&& objects)
+        {
+            if (objects.empty())
+                return;
+
+            const std::size_t count = objects.size();
+
+            {
+                std::lock_guard<std::mutex> lock(mMutex);
+
+                for (auto& object : objects)
+                {
+                    if (object)
+                        mQueue.push_back(std::move(object));
+                }
+            }
+
+            mQueued.fetch_add(count, std::memory_order_relaxed);
+            mCondition.notify_one();
+        }
+
+    private:
+        static bool diagnosticsEnabled()
+        {
+            static const bool enabled = [] {
+                const char* value = std::getenv("TSP_RECLAIM_DIAG");
+                return value != nullptr && value[0] == '1';
+            }();
+
+            return enabled;
+        }
+
+        void run()
+        {
+#if defined(__linux__)
+            // The device normally pins OpenMW heavily. Make cleanup yield CPU
+            // to the main/render path instead of producing periodic hitches.
+            ::nice(10);
+#endif
+
+            auto lastDiagnostic
+                = std::chrono::steady_clock::now();
+
+            for (;;)
+            {
+                osg::ref_ptr<osg::Object> object;
+                std::size_t pendingAfter = 0;
+
+                {
+                    std::unique_lock<std::mutex> lock(mMutex);
+
+                    mCondition.wait(lock, [this] {
+                        return mStop || !mQueue.empty();
+                    });
+
+                    if (mStop)
+                        return;
+
+                    object = std::move(mQueue.front());
+                    mQueue.pop_front();
+                    pendingAfter = mQueue.size();
+                }
+
+                // The destructor runs HERE, outside the cache mutex and
+                // outside OpenMW's normal resource-cache update worker.
+                object = nullptr;
+
+                const std::size_t reclaimed
+                    = mReclaimed.fetch_add(
+                          1, std::memory_order_relaxed)
+                    + 1;
+
+                // Never monopolize the single gameplay CPU. One millisecond
+                // between objects still clears hundreds of dead objects in
+                // seconds instead of retaining them for minutes.
+                std::this_thread::sleep_for(
+                    std::chrono::milliseconds(1));
+
+                if (diagnosticsEnabled())
+                {
+                    const auto now
+                        = std::chrono::steady_clock::now();
+
+                    if (now - lastDiagnostic
+                        >= std::chrono::seconds(5))
+                    {
+                        lastDiagnostic = now;
+
+                        Log(Debug::Info)
+                            << "[TSP_RECLAIM_V1]"
+                            << " queued_total="
+                            << mQueued.load(
+                                   std::memory_order_relaxed)
+                            << " reclaimed_total="
+                            << reclaimed
+                            << " pending="
+                            << pendingAfter;
+                    }
+                }
+            }
+        }
+
+        std::mutex mMutex;
+        std::condition_variable mCondition;
+        std::deque<osg::ref_ptr<osg::Object>> mQueue;
+        bool mStop = false;
+
+        std::atomic<std::size_t> mQueued{ 0 };
+        std::atomic<std::size_t> mReclaimed{ 0 };
+
+        std::thread mThread;
+    };
+
+    inline TspAsyncObjectReclaimer& tspAsyncObjectReclaimer()
+    {
+        static TspAsyncObjectReclaimer reclaimer;
+        return reclaimer;
     }
 
     template <typename KeyType>
@@ -112,47 +267,40 @@ namespace Resource
                     return true;
                 });
             }
-            // TSP_EXPIRY_BUDGET_V1
-            // Destroying every expired object here runs all their destructors on
-            // the main thread in one frame. Measured on device: 440 nif node
-            // graphs in a single frame -> 155 ms, with only 13 ms of rendering
-            // in it. Spread the destruction over frames instead.
-            const std::size_t tspBudget = tspExpiryBudget();
-            if (tspBudget == 0)
-            {
-                objectsToRemove.clear();
-                return;
-            }
-            std::vector<osg::ref_ptr<osg::Object>> tspBatch;
-            {
-                std::lock_guard<std::mutex> tspLock(mTspPendingMutex);
-                for (auto& tspObj : objectsToRemove)
-                    mTspPending.push_back(std::move(tspObj));
-                objectsToRemove.clear();
-                std::size_t tspTake = std::min(tspBudget, mTspPending.size());
-                // Safety valve: never let the backlog grow without bound.
-                if (mTspPending.size() > tspBudget * 64)
-                    tspTake = mTspPending.size();
-                tspBatch.reserve(tspTake);
-                for (std::size_t tspI = 0; tspI < tspTake; ++tspI)
-                {
-                    tspBatch.push_back(std::move(mTspPending.back()));
-                    mTspPending.pop_back();
-                }
-            }
-            tspBatch.clear();
+            // TSP_ASYNC_RECLAIM_V1
+            //
+            // These objects have already exceeded the normal cache expiry
+            // delay and no external owner is using them. Transfer their final
+            // cache refs to the asynchronous reclaimer instead of retaining a
+            // large pending backlog or destroying them in this cache-update
+            // call.
+            tspAsyncObjectReclaimer().enqueue(
+                std::move(objectsToRemove));
         }
 
         /** Remove all objects in the cache regardless of having external references or expiry times.*/
         void clear()
         {
-            std::lock_guard<std::mutex> lock(mMutex);
-            mItems.clear();
-            // TSP_EXPIRY_BUDGET_V1
+            std::vector<osg::ref_ptr<osg::Object>> objectsToRemove;
+
             {
-                std::lock_guard<std::mutex> tspLock(mTspPendingMutex);
-                mTspPending.clear();
+                std::lock_guard<std::mutex> lock(mMutex);
+
+                objectsToRemove.reserve(mItems.size());
+
+                for (auto& [key, item] : mItems)
+                {
+                    if (item.mValue)
+                        objectsToRemove.push_back(
+                            std::move(item.mValue));
+                }
+
+                mItems.clear();
             }
+
+            // TSP_ASYNC_RECLAIM_V1
+            tspAsyncObjectReclaimer().enqueue(
+                std::move(objectsToRemove));
         }
 
         /** Add a key,object,timestamp triple to the Registry::ObjectCache.*/
@@ -261,9 +409,6 @@ namespace Resource
         std::size_t mGet = 0;
         std::size_t mHit = 0;
         std::size_t mExpired = 0;
-        // TSP_EXPIRY_BUDGET_V1
-        std::vector<osg::ref_ptr<osg::Object>> mTspPending;
-        std::mutex mTspPendingMutex;
 
         Item* find(const auto& key)
         {

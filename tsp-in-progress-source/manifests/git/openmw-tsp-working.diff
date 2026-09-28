@@ -17,6 +17,74 @@ index 51df563b..cc62a79c 100644
 +        COMPILE_OPTIONS "-march=armv8-a;-O2;-fno-lto"
 +)
 +# <<< TSP_LOCALMAP_SAFE_ISA_V73 END
+diff --git a/apps/openmw/engine.cpp b/apps/openmw/engine.cpp
+index 7ab4a09c..9a8974bf 100644
+--- a/apps/openmw/engine.cpp
++++ b/apps/openmw/engine.cpp
+@@ -1247,8 +1247,11 @@ void OMW::Engine::prepareEngine()
+     mResourceSystem = std::make_unique<Resource::ResourceSystem>(
+         mVFS.get(), Settings::cells().mCacheExpiryDelay, &mEncoder.get()->getStatelessEncoder());
+     mResourceSystem->getSceneManager()->getShaderManager().setMaxTextureUnits(mGlMaxTextureImageUnits);
+-    mResourceSystem->getSceneManager()->setUnRefImageDataAfterApply(
+-        false); // keep to Off for now to allow better state sharing
++    // TSP_TEXTURE_CPU_RELEASE_V1
++    // This device cannot afford to retain both the GL texture and the CPU
++    // source image for every streamed/preloaded texture. OSG only unreferences
++    // static image data after the texture is safely resident in all contexts.
++    mResourceSystem->getSceneManager()->setUnRefImageDataAfterApply(true);
+     mResourceSystem->getSceneManager()->setFilterSettings(Settings::general().mTextureMagFilter,
+         Settings::general().mTextureMinFilter, Settings::general().mTextureMipmap,
+         static_cast<float>(Settings::general().mAnisotropy));
+diff --git a/apps/openmw/mwgui/alchemywindow.cpp b/apps/openmw/mwgui/alchemywindow.cpp
+index b1a23f81..8ed96dd9 100644
+--- a/apps/openmw/mwgui/alchemywindow.cpp
++++ b/apps/openmw/mwgui/alchemywindow.cpp
+@@ -58,6 +58,45 @@ namespace MWGui
+         getWidget(mIncreaseButton, "IncreaseButton");
+         getWidget(mDecreaseButton, "DecreaseButton");
+         getWidget(mNameEdit, "NameEdit");
++
++        // TSP_ALCHEMY_NAME_FIT_051_V2
++        //
++        // The enlarged TSP label was colliding with the left edge of the
++        // name field. Shift the field right while preserving its right edge.
++        {
++            // TSP_UI_POLISH_REFINEMENT_051_V3
++            // TSP_UI_POLISH_FINAL_051_V5
++            constexpr int tspNameGap = 30;
++
++            const MyGUI::IntCoord tspName
++                = mNameEdit->getCoord();
++
++            if (tspName.width > tspNameGap)
++            {
++                mNameEdit->setCoord(
++                    tspName.left + tspNameGap,
++                    tspName.top,
++                    tspName.width - tspNameGap,
++                    tspName.height);
++            }
++
++            // The original Name TextBox itself is only 65px wide.
++            // Moving NameEdit did not change that clipping rectangle,
++            // which is why the final 'e' was still missing.
++            if (mMainWidget->getChildCount() > 0)
++            {
++                MyGUI::Widget* tspNameLabel
++                    = mMainWidget->getChildAt(0);
++
++                tspNameLabel->setSize(
++                    90,
++                    tspNameLabel->getHeight());
++            }
++
++            mNameEdit->setUserString(
++                "TSP_ALCHEMY_NAME_FIT_051_V2", "1");
++        }
++
+         getWidget(mItemView, "ItemView");
+         getWidget(mFilterValue, "FilterValue");
+         getWidget(mFilterType, "FilterType");
 diff --git a/apps/openmw/mwgui/birth.cpp b/apps/openmw/mwgui/birth.cpp
 index eb5761b0..07d49a91 100644
 --- a/apps/openmw/mwgui/birth.cpp
@@ -158,6 +226,548 @@ index 2dbe8904..04ccce68 100644
          setSpecialization(0);
          update();
      }
+diff --git a/apps/openmw/mwgui/confirmationdialog.cpp b/apps/openmw/mwgui/confirmationdialog.cpp
+index d50c8713..29aa0777 100644
+--- a/apps/openmw/mwgui/confirmationdialog.cpp
++++ b/apps/openmw/mwgui/confirmationdialog.cpp
+@@ -1,3 +1,5 @@
++#include <components/debug/debuglog.hpp>
++#include <cstdio>
+ #include "confirmationdialog.hpp"
+ 
+ #include <MyGUI_Button.h>
+@@ -63,11 +65,33 @@ namespace MWGui
+ 
+     void ConfirmationDialog::onCancelButtonClicked(MyGUI::Widget* /*sender*/)
+     {
++
++        // TSP_A_CONFIRM_CANCEL_V16
++        if (std::FILE* tspFlagV16
++            = std::fopen("/tmp/openmw-tsp-a-debug", "r"))
++        {
++            std::fclose(tspFlagV16);
++
++            Log(Debug::Warning)
++                << "TSP_A_CONFIRM_CANCEL_V16";
++        }
++
+         exit();
+     }
+ 
+     void ConfirmationDialog::onOkButtonClicked(MyGUI::Widget* /*sender*/)
+     {
++
++        // TSP_A_CONFIRM_OK_V16
++        if (std::FILE* tspFlagV16
++            = std::fopen("/tmp/openmw-tsp-a-debug", "r"))
++        {
++            std::fclose(tspFlagV16);
++
++            Log(Debug::Warning)
++                << "TSP_A_CONFIRM_OK_V16";
++        }
++
+         setVisible(false);
+ 
+         eventOkClicked();
+@@ -77,6 +101,19 @@ namespace MWGui
+     {
+         if (arg.button == SDL_CONTROLLER_BUTTON_A)
+         {
++
++            // TSP_A_CONFIRM_CHILD_V16
++            if (std::FILE* tspFlagV16
++                = std::fopen("/tmp/openmw-tsp-a-debug", "r"))
++            {
++                std::fclose(tspFlagV16);
++
++                Log(Debug::Warning)
++                    << "TSP_A_CONFIRM_CHILD_V16"
++                    << " okFocus="
++                    << (mOkButtonFocus ? 1 : 0);
++            }
++
+             if (mOkButtonFocus)
+                 onOkButtonClicked(mOkButton);
+             else
+diff --git a/apps/openmw/mwgui/dialogue.cpp b/apps/openmw/mwgui/dialogue.cpp
+index 70eb008f..69686d7c 100644
+--- a/apps/openmw/mwgui/dialogue.cpp
++++ b/apps/openmw/mwgui/dialogue.cpp
+@@ -1,3 +1,4 @@
++#include <cstdio>
+ #include "dialogue.hpp"
+ 
+ #include <MyGUI_Button.h>
+@@ -436,6 +437,31 @@ namespace MWGui
+ 
+     void DialogueWindow::onSelectListItem(const std::string& topic, int /*id*/)
+     {
++
++        // TSP_A_DIALOGUE_SELECT_051_V11
++        bool tspADebugSelectV11 = false;
++
++        if (std::FILE* tspFlagV11
++            = std::fopen("/tmp/openmw-tsp-a-debug", "r"))
++        {
++            tspADebugSelectV11 = true;
++            std::fclose(tspFlagV11);
++        }
++
++        if (tspADebugSelectV11)
++        {
++            Log(Debug::Warning)
++                << "TSP_A_DIALOGUE_SELECT_V11"
++                << " topic=[" << topic << "]"
++                << " goodbye=" << (mGoodbye ? 1 : 0)
++                << " inChoice="
++                << (MWBase::Environment::get()
++                        .getDialogueManager()
++                        ->isInChoice()
++                    ? 1
++                    : 0);
++        }
++
+         MWBase::DialogueManager* dialogueManager = MWBase::Environment::get().getDialogueManager();
+ 
+         if (mGoodbye || dialogueManager->isInChoice())
+@@ -492,7 +518,80 @@ namespace MWGui
+         }
+         else
+             updateTopics();
+-    }
++    
++
++        // TSP_A_DIALOGUE_RESULT_V12
++        //
++        // Diagnostic only. At this point the selected topic/service has
++        // already run through the normal DialogueWindow logic.
++        if (std::FILE* tspFlagV12
++            = std::fopen("/tmp/openmw-tsp-a-debug", "r"))
++        {
++            std::fclose(tspFlagV12);
++
++            MWBase::WindowManager* tspWinMgrV12
++                = MWBase::Environment::get().getWindowManager();
++
++            MWGui::WindowBase* tspActiveV12
++                = tspWinMgrV12->getActiveControllerWindow();
++
++            Log(Debug::Warning)
++                << "TSP_A_DIALOGUE_RESULT_V12"
++                << " topic=[" << topic << "]"
++
++                << " activeWindow="
++                << static_cast<const void*>(tspActiveV12)
++
++                << " dialogue="
++                << (tspWinMgrV12->containsMode(
++                        MWGui::GM_Dialogue)
++                    ? 1 : 0)
++
++                << " spellbuy="
++                << (tspWinMgrV12->containsMode(
++                        MWGui::GM_SpellBuying)
++                    ? 1 : 0)
++
++                << " spellmake="
++                << (tspWinMgrV12->containsMode(
++                        MWGui::GM_SpellCreation)
++                    ? 1 : 0)
++
++                << " training="
++                << (tspWinMgrV12->containsMode(
++                        MWGui::GM_Training)
++                    ? 1 : 0)
++
++                << " repair="
++                << (tspWinMgrV12->containsMode(
++                        MWGui::GM_MerchantRepair)
++                    ? 1 : 0)
++
++                << " barter="
++                << (tspWinMgrV12->containsMode(
++                        MWGui::GM_Barter)
++                    ? 1 : 0)
++
++                << " travel="
++                << (tspWinMgrV12->containsMode(
++                        MWGui::GM_Travel)
++                    ? 1 : 0)
++
++                << " enchanting="
++                << (tspWinMgrV12->containsMode(
++                        MWGui::GM_Enchanting)
++                    ? 1 : 0)
++
++                << " companion="
++                << (tspWinMgrV12->containsMode(
++                        MWGui::GM_Companion)
++                    ? 1 : 0)
++
++                << " persuasionVisible="
++                << (mPersuasionDialog.isVisible()
++                    ? 1 : 0);
++        }
++}
+ 
+     void DialogueWindow::setPtr(const MWWorld::Ptr& actor)
+     {
+@@ -962,6 +1061,44 @@ namespace MWGui
+     {
+         if (arg.button == SDL_CONTROLLER_BUTTON_A)
+         {
++
++            // TSP_A_DIALOGUE_TARGET_051_V11
++            bool tspADebugV11 = false;
++
++            if (std::FILE* tspFlagV11
++                = std::fopen("/tmp/openmw-tsp-a-debug", "r"))
++            {
++                tspADebugV11 = true;
++                std::fclose(tspFlagV11);
++            }
++
++            if (tspADebugV11)
++            {
++                std::string tspTopicV11 = "<none>";
++
++                if (mControllerFocus < mTopicsList->getItemCount())
++                {
++                    tspTopicV11
++                        = mTopicsList->getItemNameAt(
++                            mControllerFocus);
++                }
++                else if (
++                    mControllerFocus
++                    == mTopicsList->getItemCount())
++                {
++                    tspTopicV11 = "<goodbye>";
++                }
++
++                Log(Debug::Warning)
++                    << "TSP_A_DIALOGUE_TARGET_V11"
++                    << " focus=" << mControllerFocus
++                    << " items="
++                    << mTopicsList->getItemCount()
++                    << " choices=" << mChoices.size()
++                    << " goodbye=" << (mGoodbye ? 1 : 0)
++                    << " topic=[" << tspTopicV11 << "]";
++            }
++
+             if (mChoices.size() > 0)
+             {
+                 if (mChoices.size() == 1)
+diff --git a/apps/openmw/mwgui/itemchargeview.cpp b/apps/openmw/mwgui/itemchargeview.cpp
+index 06d77ed2..72955cb6 100644
+--- a/apps/openmw/mwgui/itemchargeview.cpp
++++ b/apps/openmw/mwgui/itemchargeview.cpp
+@@ -1,5 +1,6 @@
+ #include "itemchargeview.hpp"
+ 
++#include <algorithm>
+ #include <SDL_gamecontroller.h>
+ #include <set>
+ 
+@@ -45,6 +46,8 @@ namespace MWGui
+             throw std::runtime_error("Item charge view needs a scroll view");
+ 
+         mScrollView->setCanvasAlign(MyGUI::Align::Left | MyGUI::Align::Top);
++        mScrollView->setUserString(
++            "TSP_HAMMER_REPAIR_FONT_051_V2", "1");
+     }
+ 
+     void ItemChargeView::setModel(ItemModel* model)
+@@ -145,6 +148,17 @@ namespace MWGui
+ 
+         for (Line& line : mLines)
+         {
++            // TSP_HAMMER_REPAIR_FONT_051_V2
++            //
++            // The repair-hammer list uses an 18px-high text row. Keep the
++            // larger global TSP UI font everywhere else, but cap this one
++            // health/repair list at 17px so names fit the existing row.
++            if (mDisplayMode == DisplayMode_Health)
++                line.mText->setFontHeight(
++                    std::min(17, Settings::gui().mFontSize.get()));
++            else
++                line.mText->setFontHeight(0);
++
+             line.mText->setCoord(8, currentY, mScrollView->getWidth() - 8, 18);
+             currentY += 19;
+ 
+@@ -254,6 +268,50 @@ namespace MWGui
+             mControllerFocus = wrap(mControllerFocus, mLines.size(), -1);
+         else if (button == SDL_CONTROLLER_BUTTON_DPAD_DOWN)
+             mControllerFocus = wrap(mControllerFocus, mLines.size(), 1);
++        else if (button == SDL_CONTROLLER_BUTTON_LEFTSHOULDER
++            || button == SDL_CONTROLLER_BUTTON_RIGHTSHOULDER)
++        {
++            // TSP_ITEMCHARGE_VISIBLE_PAGE_051_V1
++            // Page by the number of complete rows that actually fit in the
++            // current viewport instead of assuming a stock font/row count.
++            const int tspViewHeight
++                = std::max(1, mScrollView->getViewCoord().height);
++
++            int tspRowStep = 55;
++
++            if (mLines.size() > 1)
++            {
++                tspRowStep
++                    = mLines[1].mText->getTop()
++                    - mLines[0].mText->getTop();
++            }
++
++            if (tspRowStep <= 0)
++            {
++                tspRowStep = std::max(
++                    1,
++                    std::max(
++                        mLines[mControllerFocus].mText->getHeight(),
++                        mLines[mControllerFocus].mIcon->getHeight() + 4));
++            }
++
++            const size_t tspPage = static_cast<size_t>(
++                std::max(1, tspViewHeight / tspRowStep));
++
++            if (button == SDL_CONTROLLER_BUTTON_LEFTSHOULDER)
++            {
++                if (mControllerFocus > tspPage)
++                    mControllerFocus -= tspPage;
++                else
++                    mControllerFocus = 0;
++            }
++            else
++            {
++                mControllerFocus = std::min(
++                    mLines.size() - 1,
++                    mControllerFocus + tspPage);
++            }
++        }
+ 
+         if (prevFocus != mControllerFocus)
+             updateControllerFocus(prevFocus, mControllerFocus);
+@@ -277,11 +335,45 @@ namespace MWGui
+             mLines[newFocus].mText->setTextColour(textColours.link);
+             mLines[newFocus].mIcon->setControllerFocus(true);
+ 
+-            // Scroll the list to keep the active item in view
+-            if (newFocus <= 3)
+-                mScrollView->setViewOffset(MyGUI::IntPoint(0, 0));
+-            else
+-                mScrollView->setViewOffset(MyGUI::IntPoint(0, -55 * static_cast<int>(newFocus - 3)));
++            // TSP_ITEMCHARGE_VISIBLE_PAGE_051_V1
++            // Keep the full selected repair/recharge row inside the actual
++            // viewport. The old <=3 / 55px calculation was one row wrong
++            // after the TSP font increase.
++            const int tspViewHeight
++                = mScrollView->getViewCoord().height;
++
++            if (tspViewHeight > 0)
++            {
++                const int tspCurrentTop
++                    = std::max(0, -mScrollView->getViewOffset().top);
++
++                const int tspItemTop = std::min(
++                    mLines[newFocus].mText->getTop(),
++                    mLines[newFocus].mIcon->getTop());
++
++                const int tspItemBottom = std::max(
++                    mLines[newFocus].mText->getTop()
++                        + mLines[newFocus].mText->getHeight(),
++                    mLines[newFocus].mIcon->getTop()
++                        + mLines[newFocus].mIcon->getHeight() + 4);
++
++                int tspNewTop = tspCurrentTop;
++
++                if (tspItemTop < tspCurrentTop)
++                    tspNewTop = tspItemTop;
++                else if (tspItemBottom > tspCurrentTop + tspViewHeight)
++                    tspNewTop = tspItemBottom - tspViewHeight;
++
++                const int tspMaxTop = std::max(
++                    0,
++                    mScrollView->getCanvasSize().height - tspViewHeight);
++
++                tspNewTop = std::clamp(
++                    tspNewTop, 0, tspMaxTop);
++
++                mScrollView->setViewOffset(
++                    MyGUI::IntPoint(0, -tspNewTop));
++            }
+         }
+     }
+ }
+diff --git a/apps/openmw/mwgui/mainmenu.cpp b/apps/openmw/mwgui/mainmenu.cpp
+index 1b576eda..efe87a31 100644
+--- a/apps/openmw/mwgui/mainmenu.cpp
++++ b/apps/openmw/mwgui/mainmenu.cpp
+@@ -1,3 +1,4 @@
++#include <cstdio>
+ #include "mainmenu.hpp"
+ 
+ #include <MyGUI_Gui.h>
+@@ -5,6 +6,7 @@
+ #include <MyGUI_RenderManager.h>
+ #include <MyGUI_TextBox.h>
+ 
++#include <components/debug/debuglog.hpp>
+ #include <components/misc/frameratelimiter.hpp>
+ #include <components/settings/values.hpp>
+ #include <components/vfs/manager.hpp>
+@@ -160,6 +162,35 @@ namespace MWGui
+ 
+     void MainMenu::onButtonClicked(MyGUI::Widget* sender)
+     {
++
++        // TSP_A_MAINMENU_CLICK_051_V11
++        bool tspADebugClickV11 = false;
++
++        if (std::FILE* tspFlagV11
++            = std::fopen("/tmp/openmw-tsp-a-debug", "r"))
++        {
++            tspADebugClickV11 = true;
++            std::fclose(tspFlagV11);
++        }
++
++        if (tspADebugClickV11)
++        {
++            const std::string* tspNameV11
++                = sender != nullptr
++                ? sender->getUserData<std::string>(false)
++                : nullptr;
++
++            Log(Debug::Warning)
++                << "TSP_A_MAINMENU_CLICK_V11"
++                << " sender="
++                << static_cast<void*>(sender)
++                << " name=["
++                << (tspNameV11 != nullptr
++                        ? *tspNameV11
++                        : std::string("<none>"))
++                << "]";
++        }
++
+         MWBase::WindowManager* winMgr = MWBase::Environment::get().getWindowManager();
+ 
+         const std::string& name = *sender->getUserData<std::string>();
+@@ -206,12 +237,115 @@ namespace MWGui
+         {
+             winMgr->toggleSettingsWindow();
+         }
+-    }
++    
++
++        // TSP_A_MAINMENU_RESULT_V12
++        //
++        // Diagnostic only. The menu action above has already executed.
++        if (std::FILE* tspFlagV12
++            = std::fopen("/tmp/openmw-tsp-a-debug", "r"))
++        {
++            std::fclose(tspFlagV12);
++
++            MWBase::WindowManager* tspWinMgrV12
++                = MWBase::Environment::get().getWindowManager();
++
++            MWGui::WindowBase* tspActiveV12
++                = tspWinMgrV12->getActiveControllerWindow();
++
++            MyGUI::Widget* tspFocusV12
++                = MyGUI::InputManager::getInstance()
++                      .getKeyFocusWidget();
++
++            const bool tspSaveVisibleV12
++                = mSaveGameDialog
++                && mSaveGameDialog->isVisible();
++
++            ConfirmationDialog* tspConfirmV12
++                = tspWinMgrV12->getConfirmationDialog();
++
++            const bool tspConfirmVisibleV12
++                = tspConfirmV12 != nullptr
++                && tspConfirmV12->isVisible();
++
++            const std::string* tspNameV12
++                = sender != nullptr
++                ? sender->getUserData<std::string>(false)
++                : nullptr;
++
++            Log(Debug::Warning)
++                << "TSP_A_MAINMENU_RESULT_V12"
++                << " name=["
++                << (tspNameV12 != nullptr
++                        ? *tspNameV12
++                        : std::string("<none>"))
++                << "]"
++
++                << " activeWindow="
++                << static_cast<const void*>(tspActiveV12)
++
++                << " keyFocus="
++                << static_cast<const void*>(tspFocusV12)
++
++                << " focusType="
++                << (tspFocusV12 != nullptr
++                        ? tspFocusV12->getTypeName()
++                        : std::string("<none>"))
++
++                << " mainMenu="
++                << (tspWinMgrV12->containsMode(
++                        MWGui::GM_MainMenu)
++                    ? 1 : 0)
++
++                << " settings="
++                << (tspWinMgrV12->isSettingsWindowVisible()
++                    ? 1 : 0)
++
++                << " saveDialog="
++                << (tspSaveVisibleV12 ? 1 : 0)
++
++                << " confirmation="
++                << (tspConfirmVisibleV12 ? 1 : 0)
++
++                << " state="
++                << static_cast<int>(
++                       MWBase::Environment::get()
++                           .getStateManager()
++                           ->getState());
++        }
++}
+ 
+     bool MainMenu::onControllerButtonEvent(const SDL_ControllerButtonEvent& arg)
+     {
+         if (arg.button == SDL_CONTROLLER_BUTTON_A)
+         {
++
++            // TSP_A_MAINMENU_TARGET_051_V11
++            bool tspADebugMainV11 = false;
++
++            if (std::FILE* tspFlagV11
++                = std::fopen("/tmp/openmw-tsp-a-debug", "r"))
++            {
++                tspADebugMainV11 = true;
++                std::fclose(tspFlagV11);
++            }
++
++            if (tspADebugMainV11)
++            {
++                MyGUI::Widget* tspFocusV11
++                    = MyGUI::InputManager::getInstance()
++                          .getKeyFocusWidget();
++
++                Log(Debug::Warning)
++                    << "TSP_A_MAINMENU_TARGET_V11"
++                    << " focus="
++                    << static_cast<void*>(tspFocusV11)
++                    << " focusType="
++                    << (tspFocusV11 != nullptr
++                            ? tspFocusV11->getTypeName()
++                            : std::string("<none>"));
++            }
++
+             // TSP_MAINMENU_ACTIVATE_051_V54 -- stock injected KeyCode::Space and
+             // relied on MyGUI key focus already sitting on a menu button. When it
+             // was anywhere else the press vanished silently: that is the
 diff --git a/apps/openmw/mwgui/mapwindow.cpp b/apps/openmw/mwgui/mapwindow.cpp
 index 2cd3cd35..02825fc0 100644
 --- a/apps/openmw/mwgui/mapwindow.cpp
@@ -270,6 +880,132 @@ index 2cd3cd35..02825fc0 100644
              if (!entry.mFogTexture && mFogOfWarToggled && mFogOfWarEnabled)
              {
                  osg::ref_ptr<osg::Texture2D> tex = mLocalMapRender->getFogOfWarTexture(entry.mCellX, entry.mCellY);
+diff --git a/apps/openmw/mwgui/merchantrepair.cpp b/apps/openmw/mwgui/merchantrepair.cpp
+index dcd9b6b6..660a3673 100644
+--- a/apps/openmw/mwgui/merchantrepair.cpp
++++ b/apps/openmw/mwgui/merchantrepair.cpp
+@@ -1,5 +1,7 @@
+ #include "merchantrepair.hpp"
+ 
++#include <algorithm>
++#include <vector>
+ #include <components/esm3/loadgmst.hpp>
+ #include <components/settings/values.hpp>
+ 
+@@ -27,6 +29,64 @@ namespace MWGui
+         getWidget(mOkButton, "OkButton");
+         getWidget(mGoldLabel, "PlayerGold");
+ 
++        // TSP_MERCHANT_REPAIR_POLISH_051_V2
++        //
++        // Give long item names + repair prices actual horizontal room.
++        // Keep all top-level layout relationships identical; only widen them.
++        {
++            // TSP_UI_POLISH_REFINEMENT_051_V3
++            // V2 still clipped prices after long equipment names.
++            constexpr int tspExtraWidth = 180;
++
++            MyGUI::Widget* tspFrame = mList->getParent();
++
++            if (tspFrame != nullptr)
++            {
++                std::vector<std::pair<MyGUI::Widget*, MyGUI::IntCoord>>
++                    tspRootCoords;
++
++                for (size_t i = 0;
++                     i < mMainWidget->getChildCount();
++                     ++i)
++                {
++                    MyGUI::Widget* child
++                        = mMainWidget->getChildAt(i);
++
++                    tspRootCoords.emplace_back(
++                        child, child->getCoord());
++                }
++
++                const MyGUI::IntCoord tspListCoord
++                    = mList->getCoord();
++
++                mMainWidget->setSize(
++                    mMainWidget->getWidth() + tspExtraWidth,
++                    mMainWidget->getHeight());
++
++                for (auto& entry : tspRootCoords)
++                {
++                    MyGUI::Widget* child = entry.first;
++                    MyGUI::IntCoord coord = entry.second;
++
++                    if (child == mOkButton)
++                        coord.left += tspExtraWidth;
++                    else
++                        coord.width += tspExtraWidth;
++
++                    child->setCoord(coord);
++                }
++
++                mList->setCoord(
++                    tspListCoord.left,
++                    tspListCoord.top,
++                    tspListCoord.width + tspExtraWidth,
++                    tspListCoord.height);
++            }
++
++            mMainWidget->setUserString(
++                "TSP_MERCHANT_REPAIR_POLISH_051_V2", "1");
++        }
++
+         mOkButton->eventMouseButtonClick += MyGUI::newDelegate(this, &MerchantRepair::onOkButtonClick);
+ 
+         if (Settings::gui().mControllerMenus)
+@@ -204,17 +264,39 @@ namespace MWGui
+             mButtons[mControllerFocus].first->setStateSelected(true);
+         }
+ 
+-        // Scroll the list to keep the active item in view
++        // TSP_UI_POLISH_FINAL_051_V5
++        // This window visibly fits five complete entries. Calculate the
++        // selected row from the button's REAL Y coordinate because
++        // mButtons contains only affordable entries while the actual
++        // ScrollView may contain additional disabled rows.
+         if (mControllerFocus < mButtons.size())
+         {
+-            size_t line = mButtons[mControllerFocus].second;
+-            if (line <= 5)
+-                mList->setViewOffset(MyGUI::IntPoint(0, 0));
+-            else
+-            {
+-                const int lineHeight = Settings::gui().mFontSize + 2;
+-                mList->setViewOffset(MyGUI::IntPoint(0, -lineHeight * static_cast<int>(line - 5)));
+-            }
++            const int tspLineHeight
++                = std::max(
++                    1,
++                    Settings::gui().mFontSize.get() + 2);
++
++            constexpr int tspVisibleRows = 5;
++
++            MyGUI::Widget* tspFocused
++                = mButtons[mControllerFocus].first;
++
++            const int tspItemLine
++                = tspFocused != nullptr
++                ? std::max(
++                    0,
++                    tspFocused->getTop() / tspLineHeight)
++                : 0;
++
++            const int tspTopLine
++                = std::max(
++                    0,
++                    tspItemLine - (tspVisibleRows - 1));
++
++            mList->setViewOffset(
++                MyGUI::IntPoint(
++                    0,
++                    -tspLineHeight * tspTopLine));
+         }
+ 
+         return true;
 diff --git a/apps/openmw/mwgui/race.cpp b/apps/openmw/mwgui/race.cpp
 index 11b2e06e..a73eb36a 100644
 --- a/apps/openmw/mwgui/race.cpp
@@ -460,6 +1196,664 @@ index 08b9b806..4745cd2e 100644
      }
  
      // widget controls
+diff --git a/apps/openmw/mwgui/savegamedialog.cpp b/apps/openmw/mwgui/savegamedialog.cpp
+index 78e2db86..8151deeb 100644
+--- a/apps/openmw/mwgui/savegamedialog.cpp
++++ b/apps/openmw/mwgui/savegamedialog.cpp
+@@ -1,3 +1,4 @@
++#include <cstdio>
+ #include "savegamedialog.hpp"
+ 
+ #include <iomanip>
+@@ -276,6 +277,17 @@ namespace MWGui
+ 
+     void SaveGameDialog::onCancelButtonClicked(MyGUI::Widget* /*sender*/)
+     {
++
++        // TSP_A_SAVE_CANCEL_V16
++        if (std::FILE* tspFlagV16
++            = std::fopen("/tmp/openmw-tsp-a-debug", "r"))
++        {
++            std::fclose(tspFlagV16);
++
++            Log(Debug::Warning)
++                << "TSP_A_SAVE_CANCEL_V16";
++        }
++
+         setVisible(false);
+     }
+ 
+@@ -297,6 +309,23 @@ namespace MWGui
+ 
+     void SaveGameDialog::accept(bool reallySure)
+     {
++
++        // TSP_A_SAVE_ACCEPT_V16
++        if (std::FILE* tspFlagV16
++            = std::fopen("/tmp/openmw-tsp-a-debug", "r"))
++        {
++            std::fclose(tspFlagV16);
++
++            Log(Debug::Warning)
++                << "TSP_A_SAVE_ACCEPT_V16"
++                << " saving="
++                << (mSaving ? 1 : 0)
++                << " sure="
++                << (reallySure ? 1 : 0)
++                << " currentSlot="
++                << (mCurrentSlot != nullptr ? 1 : 0);
++        }
++
+         if (mSaving)
+         {
+             // If overwriting an existing slot, ask for confirmation first
+@@ -355,6 +384,21 @@ namespace MWGui
+ 
+     void SaveGameDialog::onOkButtonClicked(MyGUI::Widget* /*sender*/)
+     {
++
++        // TSP_A_SAVE_OK_V16
++        if (std::FILE* tspFlagV16
++            = std::fopen("/tmp/openmw-tsp-a-debug", "r"))
++        {
++            std::fclose(tspFlagV16);
++
++            Log(Debug::Warning)
++                << "TSP_A_SAVE_OK_V16"
++                << " saving="
++                << (mSaving ? 1 : 0)
++                << " currentSlot="
++                << (mCurrentSlot != nullptr ? 1 : 0);
++        }
++
+         accept();
+     }
+ 
+@@ -537,6 +581,25 @@ namespace MWGui
+     {
+         if (arg.button == SDL_CONTROLLER_BUTTON_A)
+         {
++
++            // TSP_A_SAVE_CHILD_V16
++            if (std::FILE* tspFlagV16
++                = std::fopen("/tmp/openmw-tsp-a-debug", "r"))
++            {
++                std::fclose(tspFlagV16);
++
++                Log(Debug::Warning)
++                    << "TSP_A_SAVE_CHILD_V16"
++                    << " saving="
++                    << (mSaving ? 1 : 0)
++                    << " okFocus="
++                    << (mOkButtonFocus ? 1 : 0)
++                    << " selected="
++                    << mSaveList->getIndexSelected()
++                    << " currentSlot="
++                    << (mCurrentSlot != nullptr ? 1 : 0);
++            }
++
+             if (mOkButtonFocus)
+                 onOkButtonClicked(mOkButton);
+             else
+@@ -567,6 +630,24 @@ namespace MWGui
+             winMgr->setKeyFocusWidget(mSaveList);
+             winMgr->injectKeyPress(MyGUI::KeyCode::ArrowDown, 0, false);
+         }
++        else if (arg.button == SDL_CONTROLLER_BUTTON_LEFTSHOULDER
++            || arg.button == SDL_CONTROLLER_BUTTON_RIGHTSHOULDER)
++        {
++            // TSP_SAVELOAD_SHOULDER_PAGE_051_V1
++            // The save/load ListBox already owns held Up/Down repeat.
++            // Shoulders simply use MyGUI's native page navigation.
++            MWBase::WindowManager* winMgr
++                = MWBase::Environment::get().getWindowManager();
++
++            winMgr->setKeyFocusWidget(mSaveList);
++
++            winMgr->injectKeyPress(
++                arg.button == SDL_CONTROLLER_BUTTON_LEFTSHOULDER
++                    ? MyGUI::KeyCode::PageUp
++                    : MyGUI::KeyCode::PageDown,
++                0,
++                false);
++        }
+         else if ((arg.button == SDL_CONTROLLER_BUTTON_DPAD_LEFT && !mOkButtonFocus)
+             || (arg.button == SDL_CONTROLLER_BUTTON_DPAD_RIGHT && mOkButtonFocus))
+         {
+diff --git a/apps/openmw/mwgui/spellbuyingwindow.cpp b/apps/openmw/mwgui/spellbuyingwindow.cpp
+index ac11b1d4..1bd46699 100644
+--- a/apps/openmw/mwgui/spellbuyingwindow.cpp
++++ b/apps/openmw/mwgui/spellbuyingwindow.cpp
+@@ -1,5 +1,9 @@
++#include <components/debug/debuglog.hpp>
++#include <cstdio>
+ #include "spellbuyingwindow.hpp"
+ 
++#include <vector>
++#include <algorithm>
+ #include <MyGUI_Button.h>
+ #include <MyGUI_Gui.h>
+ #include <MyGUI_ScrollView.h>
+@@ -33,6 +37,228 @@ namespace MWGui
+         getWidget(mPlayerGold, "PlayerGold");
+         getWidget(mSpellsView, "SpellsView");
+ 
++        // TSP_SPELLBUY_LAYOUT_POLISH_051_V2
++        //
++        // The TSP UI font is larger than the stock layout was designed for.
++        // Widen the list so prices cannot sit underneath the scrollbar, then
++        // extend its height ONLY enough to end on a complete text row.
++        {
++            // TSP_UI_POLISH_REFINEMENT_051_V3
++            constexpr int tspExtraWidth = 30;
++
++            const int tspLineHeight
++                = std::max(1, Settings::gui().mFontSize + 2);
++
++            const int tspViewHeight
++                = std::max(1, mSpellsView->getViewCoord().height);
++
++            const int tspRemainder
++                = tspViewHeight % tspLineHeight;
++
++            // TSP_UI_POLISH_REFINEMENT_051_V3
++            // Do not create a partial empty row at the bottom.
++            // Shrink to the previous complete row instead.
++            const int tspExtraHeight
++                = (tspRemainder == 0
++                    ? 0
++                    : -tspRemainder) - 4;
++
++            MyGUI::Widget* tspFrame = mSpellsView->getParent();
++
++            if (tspFrame != nullptr)
++            {
++                std::vector<std::pair<MyGUI::Widget*, MyGUI::IntCoord>>
++                    tspRootCoords;
++
++                for (size_t i = 0;
++                     i < mMainWidget->getChildCount();
++                     ++i)
++                {
++                    MyGUI::Widget* child
++                        = mMainWidget->getChildAt(i);
++
++                    tspRootCoords.emplace_back(
++                        child, child->getCoord());
++                }
++
++                const MyGUI::IntCoord tspScrollCoord
++                    = mSpellsView->getCoord();
++
++                mMainWidget->setSize(
++                    mMainWidget->getWidth() + tspExtraWidth,
++                    mMainWidget->getHeight() + tspExtraHeight);
++
++                for (auto& entry : tspRootCoords)
++                {
++                    MyGUI::Widget* child = entry.first;
++                    MyGUI::IntCoord coord = entry.second;
++
++                    if (child == mCancelButton)
++                    {
++                        coord.left += tspExtraWidth;
++                        coord.top += tspExtraHeight;
++                    }
++                    else if (child == mPlayerGold)
++                    {
++                        coord.width += tspExtraWidth;
++                        coord.top += tspExtraHeight;
++                    }
++                    else
++                    {
++                        coord.width += tspExtraWidth;
++
++                        if (child == tspFrame)
++                            coord.height += tspExtraHeight;
++                    }
++
++                    child->setCoord(coord);
++                }
++
++                mSpellsView->setCoord(
++                    tspScrollCoord.left,
++                    tspScrollCoord.top,
++                    // TSP_UI_POLISH_REFINEMENT_051_V3
++                    // Put the scrollbar at the actual right edge of
++                    // the enclosing list frame instead of leaving the
++                    // large unused black column from V2.
++                    std::max(
++                        1,
++                        tspFrame->getWidth()
++                            - tspScrollCoord.left - 1),
++                    tspScrollCoord.height + tspExtraHeight);
++            }
++
++            mMainWidget->setUserString(
++                "TSP_SPELLBUY_LAYOUT_POLISH_051_V2", "1");
++        }
++
++        // TSP_SPELLBUY_GEOMETRY_FINAL_051_V10
++        //
++        // Keep the existing wider window. Fit the ScrollView to the real
++        // enclosing frame and remove only the fractional-row remainder.
++        {
++            MyGUI::Widget* tspFrame = mSpellsView->getParent();
++
++            if (tspFrame != nullptr)
++            {
++                const int tspLineHeight
++                    = std::max(
++                        1,
++                        static_cast<int>(Settings::gui().mFontSize) + 2);
++
++                const MyGUI::IntCoord tspFrameCoord
++                    = tspFrame->getCoord();
++
++                const MyGUI::IntCoord tspScrollCoord
++                    = mSpellsView->getCoord();
++
++                const MyGUI::IntCoord tspGoldCoord
++                    = mPlayerGold->getCoord();
++
++                const MyGUI::IntCoord tspCancelCoord
++                    = mCancelButton->getCoord();
++
++                // Difference between outer ScrollView height and its usable
++                // inner viewport: scrollbar/skin/border overhead.
++                const int tspSkinHeight
++                    = std::max(
++                        0,
++                        tspScrollCoord.height
++                            - mSpellsView->getViewCoord().height);
++
++                constexpr int tspRightPadding = 1;
++                constexpr int tspBottomPadding = 5;
++
++                // Fill all horizontal space inside the existing frame.
++                const int tspOuterWidth
++                    = std::max(
++                        1,
++                        tspFrameCoord.width
++                            - tspScrollCoord.left
++                            - tspRightPadding);
++
++                // Maximum ScrollView height that already fits this frame.
++                const int tspAvailableOuterHeight
++                    = std::max(
++                        1,
++                        tspFrameCoord.height
++                            - tspScrollCoord.top
++                            - tspBottomPadding);
++
++                const int tspAvailableInnerHeight
++                    = std::max(
++                        tspLineHeight,
++                        tspAvailableOuterHeight
++                            - tspSkinHeight);
++
++                // Largest WHOLE number of spell rows that fits.
++                const int tspVisibleRows
++                    = std::max(
++                        1,
++                        tspAvailableInnerHeight
++                            / tspLineHeight);
++
++                const int tspTargetInnerHeight
++                    = tspVisibleRows * tspLineHeight;
++
++                const int tspTargetOuterHeight
++                    = tspTargetInnerHeight + tspSkinHeight;
++
++                const int tspTargetFrameHeight
++                    = tspScrollCoord.top
++                        + tspTargetOuterHeight
++                        + tspBottomPadding;
++
++                const int tspTrim
++                    = std::max(
++                        0,
++                        tspFrameCoord.height
++                            - tspTargetFrameHeight);
++
++                // Only remove the fractional-row remainder. No extra row
++                // is added and no guessed 5/6/7-row window height is used.
++                if (tspTrim > 0)
++                {
++                    mMainWidget->setSize(
++                        mMainWidget->getWidth(),
++                        std::max(
++                            1,
++                            mMainWidget->getHeight() - tspTrim));
++                }
++
++                tspFrame->setCoord(
++                    tspFrameCoord.left,
++                    tspFrameCoord.top,
++                    tspFrameCoord.width,
++                    tspTargetFrameHeight);
++
++                mSpellsView->setCoord(
++                    tspScrollCoord.left,
++                    tspScrollCoord.top,
++                    tspOuterWidth,
++                    tspTargetOuterHeight);
++
++                if (tspTrim > 0)
++                {
++                    mPlayerGold->setCoord(
++                        tspGoldCoord.left,
++                        tspGoldCoord.top - tspTrim,
++                        tspGoldCoord.width,
++                        tspGoldCoord.height);
++
++                    mCancelButton->setCoord(
++                        tspCancelCoord.left,
++                        tspCancelCoord.top - tspTrim,
++                        tspCancelCoord.width,
++                        tspCancelCoord.height);
++                }
++
++                mSpellsView->setUserString(
++                    "TSP_SPELLBUY_GEOMETRY_FINAL_051_V10",
++                    MyGUI::utility::toString(tspVisibleRows));
++            }
++        }
++
+         mCancelButton->eventMouseButtonClick += MyGUI::newDelegate(this, &SpellBuyingWindow::onCancelButtonClicked);
+ 
+         if (Settings::gui().mControllerMenus)
+@@ -157,13 +383,23 @@ namespace MWGui
+             }
+         }
+ 
+-        // Canvas size must be expressed with VScroll disabled, otherwise MyGUI would expand the scroll area when the
+-        // scrollbar is hidden
++        // TSP_SPELLBUY_PROVEN_CANVAS_051_V13
++        //
++        // Use the normal MyGUI ScrollView setup used by the other working
++        // service lists. mCurrentY is the complete physical spell-list height.
++        //
++        // Do not substitute getViewCoord() here and do not rebuild the
++        // canvas during controller movement.
+         mSpellsView->setVisibleVScroll(false);
+         mSpellsView->setCanvasSize(
+-            MyGUI::IntSize(mSpellsView->getWidth(), std::max(mSpellsView->getHeight(), mCurrentY)));
++            MyGUI::IntSize(
++                mSpellsView->getWidth(),
++                std::max(
++                    mSpellsView->getHeight(),
++                    mCurrentY)));
+         mSpellsView->setVisibleVScroll(true);
+-        mSpellsView->setViewOffset(MyGUI::IntPoint(0, startOffset));
++        mSpellsView->setViewOffset(
++            MyGUI::IntPoint(0, startOffset));
+     }
+ 
+     bool SpellBuyingWindow::playerHasSpell(const ESM::RefId& id)
+@@ -174,6 +410,19 @@ namespace MWGui
+ 
+     void SpellBuyingWindow::onSpellButtonClick(MyGUI::Widget* sender)
+     {
++
++        // TSP_A_SPELLBUY_ACTION_V16
++        if (std::FILE* tspFlagV16
++            = std::fopen("/tmp/openmw-tsp-a-debug", "r"))
++        {
++            std::fclose(tspFlagV16);
++
++            Log(Debug::Warning)
++                << "TSP_A_SPELLBUY_ACTION_V16"
++                << " sender="
++                << static_cast<const void*>(sender);
++        }
++
+         int price = *sender->getUserData<int>();
+ 
+         MWWorld::Ptr player = MWMechanics::getPlayer();
+@@ -230,63 +479,145 @@ namespace MWGui
+ 
+     bool SpellBuyingWindow::onControllerButtonEvent(const SDL_ControllerButtonEvent& arg)
+     {
+-        MWBase::WindowManager* winMgr = MWBase::Environment::get().getWindowManager();
++        MWBase::WindowManager* winMgr
++            = MWBase::Environment::get().getWindowManager();
+ 
+         if (arg.button == SDL_CONTROLLER_BUTTON_A)
+         {
++
++            // TSP_A_SPELLBUY_CHILD_V16
++            if (std::FILE* tspFlagV16
++                = std::fopen("/tmp/openmw-tsp-a-debug", "r"))
++            {
++                std::fclose(tspFlagV16);
++
++                Log(Debug::Warning)
++                    << "TSP_A_SPELLBUY_CHILD_V16"
++                    << " focus=" << mControllerFocus
++                    << " count=" << mSpellButtons.size()
++                    << " valid="
++                    << (mControllerFocus < mSpellButtons.size()
++                            ? 1 : 0)
++                    << " offset="
++                    << mSpellsView->getViewOffset().top;
++            }
++
+             if (mControllerFocus < mSpellButtons.size())
+-                onSpellButtonClick(mSpellButtons[mControllerFocus].first);
++                onSpellButtonClick(
++                    mSpellButtons[mControllerFocus].first);
+         }
+         else if (arg.button == SDL_CONTROLLER_BUTTON_B)
+         {
+             onCancelButtonClicked(mCancelButton);
+             return true;
+         }
+-        else if (arg.button == SDL_CONTROLLER_BUTTON_RIGHTSTICK)
++        else if (
++            arg.button
++            == SDL_CONTROLLER_BUTTON_RIGHTSTICK)
+         {
+             // Toggle info tooltip
+-            winMgr->setControllerTooltipEnabled(!winMgr->getControllerTooltipEnabled());
++            winMgr->setControllerTooltipEnabled(
++                !winMgr->getControllerTooltipEnabled());
+         }
+-        else if (arg.button == SDL_CONTROLLER_BUTTON_DPAD_UP)
++        else if (
++            arg.button
++            == SDL_CONTROLLER_BUTTON_DPAD_UP)
+         {
+             winMgr->restoreControllerTooltips();
+ 
+             if (mSpellButtons.size() <= 1)
+                 return true;
+ 
+-            mSpellButtons[mControllerFocus].first->setStateSelected(false);
+-            mControllerFocus = wrap(mControllerFocus, mSpellButtons.size(), -1);
+-            mSpellButtons[mControllerFocus].first->setStateSelected(true);
++            mSpellButtons[mControllerFocus]
++                .first->setStateSelected(false);
++
++            mControllerFocus = wrap(
++                mControllerFocus,
++                mSpellButtons.size(),
++                -1);
++
++            mSpellButtons[mControllerFocus]
++                .first->setStateSelected(true);
+         }
+-        else if (arg.button == SDL_CONTROLLER_BUTTON_DPAD_DOWN)
++        else if (
++            arg.button
++            == SDL_CONTROLLER_BUTTON_DPAD_DOWN)
+         {
+             winMgr->restoreControllerTooltips();
+ 
+             if (mSpellButtons.size() <= 1)
+                 return true;
+ 
+-            mSpellButtons[mControllerFocus].first->setStateSelected(false);
+-            mControllerFocus = wrap(mControllerFocus, mSpellButtons.size(), 1);
+-            mSpellButtons[mControllerFocus].first->setStateSelected(true);
++            mSpellButtons[mControllerFocus]
++                .first->setStateSelected(false);
++
++            mControllerFocus = wrap(
++                mControllerFocus,
++                mSpellButtons.size(),
++                1);
++
++            mSpellButtons[mControllerFocus]
++                .first->setStateSelected(true);
+         }
+         else
+             return true;
+ 
++        // TSP_SPELLBUY_SCROLL_REACHABLE_051_V15
++        //
++        // IMPORTANT:
++        // This block must be OUTSIDE the button-specific
++        // if/else chain. V13 accidentally placed it inside a
++        // LEFTSHOULDER/RIGHTSHOULDER branch, so D-pad navigation
++        // changed the highlight but could never scroll the list.
++        //
++        // Use the same physical-row method that already works in
++        // Merchant Repair. mSpellButtons contains only affordable
++        // entries, while the ScrollView can also contain disabled
++        // rows, so the widget's real Y coordinate is authoritative.
+         if (mControllerFocus < mSpellButtons.size())
+         {
+-            // Scroll the list to keep the active item in view
+-            size_t line = mSpellButtons[mControllerFocus].second;
+-            if (line <= 5)
+-                mSpellsView->setViewOffset(MyGUI::IntPoint(0, 0));
+-            else
++            const int tspLineHeight
++                = std::max(
++                    1,
++                    static_cast<int>(
++                        Settings::gui().mFontSize)
++                        + 2);
++
++            constexpr int tspVisibleRows = 6;
++
++            MyGUI::Widget* tspFocused
++                = mSpellButtons[mControllerFocus].first;
++
++            const int tspItemLine
++                = tspFocused != nullptr
++                ? std::max(
++                    0,
++                    tspFocused->getTop()
++                        / tspLineHeight)
++                : 0;
++
++            const int tspTopLine
++                = std::max(
++                    0,
++                    tspItemLine
++                        - (tspVisibleRows - 1));
++
++            mSpellsView->setViewOffset(
++                MyGUI::IntPoint(
++                    0,
++                    -tspLineHeight
++                        * tspTopLine));
++
++            // Preserve the existing tooltip behavior.
++            if (winMgr->getControllerTooltipVisible())
+             {
+-                const int lineHeight = Settings::gui().mFontSize + 2;
+-                mSpellsView->setViewOffset(MyGUI::IntPoint(0, -lineHeight * static_cast<int>(line - 5)));
++                MWBase::Environment::get()
++                    .getInputManager()
++                    ->warpMouseToWidget(
++                        mSpellButtons[
++                            mControllerFocus]
++                            .first);
+             }
+-
+-            // Warp the mouse to the selected spell to show the tooltip
+-            if (MWBase::Environment::get().getWindowManager()->getControllerTooltipVisible())
+-                MWBase::Environment::get().getInputManager()->warpMouseToWidget(mSpellButtons[mControllerFocus].first);
+         }
+ 
+         return true;
+diff --git a/apps/openmw/mwgui/spellcreationdialog.cpp b/apps/openmw/mwgui/spellcreationdialog.cpp
+index 39cd7aeb..3c32d4aa 100644
+--- a/apps/openmw/mwgui/spellcreationdialog.cpp
++++ b/apps/openmw/mwgui/spellcreationdialog.cpp
+@@ -1,3 +1,5 @@
++#include <components/debug/debuglog.hpp>
++#include <cstdio>
+ #include "spellcreationdialog.hpp"
+ 
+ #include <format>
+@@ -736,6 +738,21 @@ namespace MWGui
+ 
+     bool SpellCreationDialog::onControllerButtonEvent(const SDL_ControllerButtonEvent& arg)
+     {
++
++        // TSP_A_SPELLCREATE_CHILD_V16
++        if (arg.button == SDL_CONTROLLER_BUTTON_A)
++        {
++            if (std::FILE* tspFlagV16
++                = std::fopen("/tmp/openmw-tsp-a-debug", "r"))
++            {
++                std::fclose(tspFlagV16);
++
++                Log(Debug::Warning)
++                    << "TSP_A_SPELLCREATE_CHILD_V16"
++                    << " route=EffectEditorBase";
++            }
++        }
++
+         if (arg.button == SDL_CONTROLLER_BUTTON_B)
+         {
+             onCancelButtonClicked(mCancelButton);
+@@ -1031,6 +1048,41 @@ namespace MWGui
+ 
+         if (arg.button == SDL_CONTROLLER_BUTTON_A)
+         {
++
++            // TSP_A_EFFECTEDITOR_CHILD_V16
++            if (std::FILE* tspFlagV16
++                = std::fopen("/tmp/openmw-tsp-a-debug", "r"))
++            {
++                std::fclose(tspFlagV16);
++
++                const bool tspAvailableActionV16
++                    = !mRightColumn
++                    && mAvailableFocus
++                        < mAvailableButtons.size();
++
++                const bool tspEditActionV16
++                    = mRightColumn
++                    && mEffectFocus
++                        < mEffectButtons.size();
++
++                Log(Debug::Warning)
++                    << "TSP_A_EFFECTEDITOR_CHILD_V16"
++                    << " rightColumn="
++                    << (mRightColumn ? 1 : 0)
++                    << " availableFocus="
++                    << mAvailableFocus
++                    << " availableCount="
++                    << mAvailableButtons.size()
++                    << " effectFocus="
++                    << mEffectFocus
++                    << " effectCount="
++                    << mEffectButtons.size()
++                    << " availableAction="
++                    << (tspAvailableActionV16 ? 1 : 0)
++                    << " editAction="
++                    << (tspEditActionV16 ? 1 : 0);
++            }
++
+             if (!mRightColumn && mAvailableFocus < mAvailableButtons.size())
+             {
+                 onAvailableEffectClicked(mAvailableButtons[mAvailableFocus]);
 diff --git a/apps/openmw/mwgui/widgets.cpp b/apps/openmw/mwgui/widgets.cpp
 index da1d1a03..55d1bcc4 100644
 --- a/apps/openmw/mwgui/widgets.cpp
@@ -589,22 +1983,147 @@ index ffcfa6b2..239f29c3 100644
              /**
               * @param vector to store the created effect widgets
 diff --git a/apps/openmw/mwinput/controllermanager.cpp b/apps/openmw/mwinput/controllermanager.cpp
-index bccb7b25..760682ef 100644
+index bccb7b25..865b7406 100644
 --- a/apps/openmw/mwinput/controllermanager.cpp
 +++ b/apps/openmw/mwinput/controllermanager.cpp
-@@ -1,7 +1,9 @@
+@@ -1,7 +1,10 @@
  #include "controllermanager.hpp"
  
  #include <MyGUI_Button.h>
 +#include <MyGUI_EditBox.h>
  #include <MyGUI_InputManager.h>
++#include <MyGUI_ListBox.h>
 +#include <MyGUI_ScrollView.h>
  
  #include <SDL.h>
  
-@@ -222,16 +224,33 @@ namespace MWInput
+@@ -30,6 +33,30 @@ namespace MWInput
+ {
+     namespace
+     {
++        // TSP_A_FRAME_WATCH_STATE_V17
++        //
++        // Diagnostic only. Tracks:
++        //   - actual SDL controller A state edges;
++        //   - whether buttonPressed saw the same edge;
++        //   - the active GUI window for several frames after A.
++        int sTspAWatchFramesV17 = 0;
++        unsigned long long sTspAWatchSeqV17 = 0;
++        bool sTspAEventSeenV17 = false;
++        bool sTspAPollInitializedV17 = false;
++        bool sTspALastPolledV17 = false;
++
++        bool tspADebugGateV17()
++        {
++            if (std::FILE* tspFlagV17
++                = std::fopen("/tmp/openmw-tsp-a-debug", "r"))
++            {
++                std::fclose(tspFlagV17);
++                return true;
++            }
++
++            return false;
++        }
++
+         // TSP_MOUSE_MODE_051_V41 -- longest gap between two MENU taps that still
+         // counts as a double tap. Named constant so retuning is a one-token sed.
+         constexpr unsigned int sTspMenuDoubleTapMs = 400;
+@@ -221,17 +248,126 @@ namespace MWInput
+ 
      void ControllerManager::update(float dt)
      {
++        // TSP_A_POLLED_EDGE_V17
++        //
++        // SDL_GameControllerGetButton() is persistent state rather than
++        // an event-queue callback. If this changes to DOWN but
++        // buttonPressed() did not run, the press vanished between SDL's
++        // device state and ControllerManager event dispatch.
++        if (tspADebugGateV17())
++        {
++            const bool tspANowV17
++                = isButtonPressed(
++                    SDL_CONTROLLER_BUTTON_A);
++
++            if (!sTspAPollInitializedV17)
++            {
++                sTspAPollInitializedV17 = true;
++                sTspALastPolledV17 = tspANowV17;
++            }
++            else if (tspANowV17 != sTspALastPolledV17)
++            {
++                Log(Debug::Warning)
++                    << "TSP_A_POLLED_EDGE_V17"
++                    << " edge="
++                    << (tspANowV17 ? "down" : "up")
++                    << " ticks=" << SDL_GetTicks()
++                    << " controllerEventSeen="
++                    << (sTspAEventSeenV17 ? 1 : 0);
++
++                sTspALastPolledV17 = tspANowV17;
++            }
++
++            // TSP_A_POST_FRAME_V17
++            //
++            // Follow the destination for multiple rendered frames. The
++            // previous diagnostic only proved that the child existed
++            // immediately inside the click callback.
++            if (sTspAWatchFramesV17 > 0)
++            {
++                MWBase::WindowManager* tspWinMgrV17
++                    = MWBase::Environment::get()
++                          .getWindowManager();
++
++                MWGui::WindowBase* tspTopV17
++                    = tspWinMgrV17->isGuiMode()
++                    ? tspWinMgrV17
++                          ->getActiveControllerWindow()
++                    : nullptr;
++
++                const int tspFrameV17
++                    = 9 - sTspAWatchFramesV17;
++
++                Log(Debug::Warning)
++                    << "TSP_A_POST_FRAME_V17"
++                    << " watchSeq="
++                    << sTspAWatchSeqV17
++                    << " frame=" << tspFrameV17
++                    << " ticks=" << SDL_GetTicks()
++                    << " gui="
++                    << (tspWinMgrV17->isGuiMode()
++                            ? 1
++                            : 0)
++                    << " top="
++                    << static_cast<const void*>(
++                           tspTopV17)
++                    << " topVisible="
++                    << (tspTopV17 != nullptr
++                            && tspTopV17->isVisible()
++                            ? 1
++                            : 0)
++                    << " modal="
++                    << (MyGUI::InputManager::getInstance()
++                                .isModalAny()
++                            ? 1
++                            : 0)
++                    << " settings="
++                    << (tspWinMgrV17
++                                ->isSettingsWindowVisible()
++                            ? 1
++                            : 0)
++                    << " textInput="
++                    << (SDL_IsTextInputActive()
++                                == SDL_TRUE
++                            ? 1
++                            : 0)
++                    << " aState="
++                    << (tspANowV17 ? 1 : 0);
++
++                --sTspAWatchFramesV17;
++            }
++        }
++
++        // The next update corresponds to the next SDL capture cycle.
++        sTspAEventSeenV17 = false;
          // TSP_CHORD_051_V43 -- belt and braces: if we think MENU is held but SDL
 -        // says the physical button is up, we missed a release. Mark it
 -        // chord-consumed so a late release cannot also toggle the mouse.
@@ -640,7 +2159,20 @@ index bccb7b25..760682ef 100644
          }
  
          // TSP_CHORD_051_V42 -- right stick / triggers while MENU is held.
-@@ -304,33 +323,95 @@ namespace MWInput
+@@ -288,7 +424,12 @@ namespace MWInput
+         MWBase::WindowManager* tspDialogueScrollWinMgrV35
+             = MWBase::Environment::get().getWindowManager();
+ 
++        // TSP_MOUSEMODE_SINGLE_SCROLL_OWNER_051_V9
++        //
++        // Native controller mode keeps the dedicated RS dialogue scroll.
++        // TSP mouse mode uses the later pointer-based RS wheel route only.
+         if (Settings::gui().mControllerMenus
++            && !tspMouseUsableNow()
+             && tspDialogueScrollWinMgrV35->isGuiMode())
+         {
+             MWGui::WindowBase* tspDialogueScrollTopWinV35
+@@ -304,33 +445,95 @@ namespace MWInput
  
                  if (std::abs(tspDialogueScrollRightYV35) > 0.14f)
                  {
@@ -738,12 +2270,12 @@ index bccb7b25..760682ef 100644
 +                            0.0f,
 +                            0.0f,
 +                            tspDialogueScrollWheelMoveV35);
-+
+ 
+-                        tspDialogueScrollLoggedV35 = true;
 +                        mMouseManager->warpMouse();
 +
 +                        static bool tspDialogueScrollLoggedV35 = false;
- 
--                        tspDialogueScrollLoggedV35 = true;
++
 +                        if (!tspDialogueScrollLoggedV35)
 +                        {
 +                            Log(Debug::Info)
@@ -756,7 +2288,7 @@ index bccb7b25..760682ef 100644
                      }
                  }
              }
-@@ -382,9 +463,42 @@ namespace MWInput
+@@ -382,9 +585,42 @@ namespace MWInput
              float mouseWheelMove = -zAxis * dt * 1500.0f;
              if (xMove != 0 || yMove != 0 || mouseWheelMove != 0)
              {
@@ -801,7 +2333,197 @@ index bccb7b25..760682ef 100644
              }
          }
  
-@@ -631,6 +745,64 @@ namespace MWInput
+@@ -400,10 +636,140 @@ namespace MWInput
+                 MWBase::Environment::get().getInputManager()->resetIdleTime();
+             }
+         }
+-    }
++    
++        // TSP_FINAL_UI_REPEAT_051_V1
++        //
++        // Controller menus which implement their own focus navigation receive
++        // only the initial SDL controller-button press. Add desktop-like held
++        // D-pad repeat here:
++        //   immediate initial press -> existing buttonPressed path
++        //   350 ms hold delay
++        //   repeat every 90 ms
++        //
++        // A focused MyGUI ListBox is deliberately excluded. Those widgets
++        // already implement keyboard/list repeat (notably Save/Load), and
++        // injecting a second repeat stream would make them skip entries.
++        {
++            constexpr Uint32 tspRepeatDelayMs = 350;
++            constexpr Uint32 tspRepeatIntervalMs = 90;
++
++            static int tspRepeatButton = -1;
++            static Uint32 tspRepeatStartMs = 0;
++            static Uint32 tspRepeatLastMs = 0;
++
++            const auto tspResetRepeat = [&]() {
++                tspRepeatButton = -1;
++                tspRepeatStartMs = 0;
++                tspRepeatLastMs = 0;
++            };
++
++            MWBase::WindowManager* tspRepeatWin
++                = MWBase::Environment::get().getWindowManager();
++
++            bool tspNativeListOwnsRepeat = false;
++
++            for (MyGUI::Widget* tspFocus
++                     = MyGUI::InputManager::getInstance().getKeyFocusWidget();
++                 tspFocus != nullptr;
++                 tspFocus = tspFocus->getParent())
++            {
++                if (tspFocus->castType<MyGUI::ListBox>(false) != nullptr)
++                {
++                    tspNativeListOwnsRepeat = true;
++                    break;
++                }
++            }
++
++            const bool tspAllowRepeat
++                = Settings::input().mEnableController
++                && Settings::gui().mControllerMenus
++                && tspRepeatWin->isGuiMode()
++                && !mTspMenuHeld
++                && !tspMouseUsableNow()
++                && !tspNativeListOwnsRepeat
++                && !(SDL_IsTextInputActive() && !tspTextSuppressed());
++
++            if (!tspAllowRepeat)
++            {
++                tspResetRepeat();
++            }
++            else
++            {
++                int tspHeld = -1;
++
++                constexpr SDL_GameControllerButton tspButtons[] = {
++                    SDL_CONTROLLER_BUTTON_DPAD_UP,
++                    SDL_CONTROLLER_BUTTON_DPAD_DOWN,
++                    SDL_CONTROLLER_BUTTON_DPAD_LEFT,
++                    SDL_CONTROLLER_BUTTON_DPAD_RIGHT,
++                };
++
++                for (SDL_GameControllerButton tspButton : tspButtons)
++                {
++                    if (isButtonPressed(tspButton))
++                    {
++                        tspHeld = static_cast<int>(tspButton);
++                        break;
++                    }
++                }
++
++                const Uint32 tspNow = SDL_GetTicks();
++
++                if (tspHeld < 0)
++                {
++                    tspResetRepeat();
++                }
++                else if (tspHeld != tspRepeatButton)
++                {
++                    tspRepeatButton = tspHeld;
++                    tspRepeatStartMs = tspNow;
++                    tspRepeatLastMs = tspNow;
++                }
++                else if ((tspNow - tspRepeatStartMs) >= tspRepeatDelayMs
++                    && (tspNow - tspRepeatLastMs) >= tspRepeatIntervalMs)
++                {
++                    SDL_ControllerButtonEvent tspRepeatEvent{};
++                    tspRepeatEvent.type = SDL_CONTROLLERBUTTONDOWN;
++                    tspRepeatEvent.timestamp = tspNow;
++                    tspRepeatEvent.button
++                        = static_cast<Uint8>(tspRepeatButton);
++                    tspRepeatEvent.state = SDL_PRESSED;
++
++                    if (tspRepeatLastMs == tspRepeatStartMs)
++                    {
++                        Log(Debug::Info)
++                            << "TSP_FINAL_UI_REPEAT_051_V1 hold-repeat-start"
++                            << " button=" << tspRepeatButton;
++                    }
++
++                    gamepadToGuiControl(tspRepeatEvent);
++                    tspRepeatLastMs = tspNow;
++                }
++            }
++        }
++
++}
+ 
+     void ControllerManager::buttonPressed(int deviceID, const SDL_ControllerButtonEvent& arg)
+     {
++        // TSP_A_CONTROLLER_ENTRY_V17
++        if (arg.button == SDL_CONTROLLER_BUTTON_A
++            && tspADebugGateV17())
++        {
++            ++sTspAWatchSeqV17;
++            sTspAWatchFramesV17 = 8;
++            sTspAEventSeenV17 = true;
++
++            Log(Debug::Warning)
++                << "TSP_A_CONTROLLER_ENTRY_V17"
++                << " watchSeq=" << sTspAWatchSeqV17
++                << " ticks=" << SDL_GetTicks()
++                << " state="
++                << (isButtonPressed(
++                        SDL_CONTROLLER_BUTTON_A)
++                        ? 1
++                        : 0);
++        }
+         // TSP_MOUSE_MODE_051_V41 -- V39's per-button trace removed; it fired on
+         // every press in the input hot path. The ctor mapping dump stays.
+         if (!Settings::input().mEnableController || mBindingsManager->isDetectingBindingState())
+@@ -414,6 +780,47 @@ namespace MWInput
+ 
+         mJoystickLastUsed = true;
+ 
++        // TSP_A_RAW_DEBUG_V10
++        // Diagnostic only. No A-button behavior is changed here.
++        // TSP_A_DEBUG_GATE_RAW_051_V11
++        bool tspARawDebugV11 = false;
++
++        if (std::FILE* tspFlagV11
++            = std::fopen("/tmp/openmw-tsp-a-debug", "r"))
++        {
++            tspARawDebugV11 = true;
++            std::fclose(tspFlagV11);
++        }
++
++        if (tspARawDebugV11
++            && arg.button == SDL_CONTROLLER_BUTTON_A)
++        {
++            static unsigned long long tspARawSequenceV10 = 0;
++            ++tspARawSequenceV10;
++
++            MWBase::WindowManager* tspADebugWinMgrV10
++                = MWBase::Environment::get().getWindowManager();
++
++            Log(Debug::Warning)
++                << "TSP_A_RAW_DEBUG_V10"
++                << " seq=" << tspARawSequenceV10
++                << " ticks=" << SDL_GetTicks()
++                << " gui="
++                << (tspADebugWinMgrV10->isGuiMode() ? 1 : 0)
++                << " mouseUsable="
++                << (tspMouseUsableNow() ? 1 : 0)
++                << " textInput="
++                << (SDL_IsTextInputActive() == SDL_TRUE ? 1 : 0)
++                << " cursorVisible="
++                << (tspADebugWinMgrV10->getCursorVisible() ? 1 : 0)
++                << " gamepadCursor="
++                << (mGamepadGuiCursorEnabled ? 1 : 0)
++                << " activeWindow="
++                << static_cast<const void*>(
++                       tspADebugWinMgrV10
++                           ->getActiveControllerWindow());
++        }
++
+         // TSP_MOUSE_MODE_051_V38
+         // The TSP MENU button (physical BTN_MODE / js b8, mapped as guide:b8) is
+         // consumed here so it can never reach the bindings manager, where stock
+@@ -631,6 +1038,64 @@ namespace MWInput
                  {
                      bool mousePressSuccess = mMouseManager->injectMouseButtonRelease(SDL_BUTTON_LEFT);
                      mGamepadMousePressed = false;
@@ -866,8 +2588,28 @@ index bccb7b25..760682ef 100644
                      if (mBindingsManager->isDetectingBindingState()) // If the player just triggered binding, don't let
                                                                       // button release bind.
                          return;
+@@ -759,7 +1224,18 @@ namespace MWInput
+ 
+                 // TSP_A_DOUBLE_PRESS_051_V53 -- measurement only. If a double
+                 // press is ever seen again, this names the branch that took it.
+-                if (arg.button == SDL_CONTROLLER_BUTTON_A)
++                // TSP_A_DEBUG_GATE_ROUTE_051_V11
++                bool tspARouteDebugV11 = false;
++
++                if (std::FILE* tspFlagV11
++                    = std::fopen("/tmp/openmw-tsp-a-debug", "r"))
++                {
++                    tspARouteDebugV11 = true;
++                    std::fclose(tspFlagV11);
++                }
++
++                if (tspARouteDebugV11
++                    && arg.button == SDL_CONTROLLER_BUTTON_A)
+                 {
+                     Log(Debug::Info)
+                         << "TSP_A_DOUBLE_PRESS_051_V53 a=press"
 diff --git a/apps/openmw/mwinput/inputmanagerimp.cpp b/apps/openmw/mwinput/inputmanagerimp.cpp
-index 20c2e6ff..a5b12dee 100644
+index 20c2e6ff..2fe822c5 100644
 --- a/apps/openmw/mwinput/inputmanagerimp.cpp
 +++ b/apps/openmw/mwinput/inputmanagerimp.cpp
 @@ -24,6 +24,9 @@
@@ -1056,8 +2798,75 @@ index 20c2e6ff..a5b12dee 100644
                  {
                      mControllerManager->tspSetMouseMode(true);
                      std::fprintf(stderr,
+@@ -315,8 +435,65 @@ namespace MWInput
+             }
+             if (tspTextResetFrames > 0)
+                 --tspTextResetFrames;
++            // TSP_TEXT_HELPER_WAIT_A_RELEASE_051_V18
++            //
++            // Do NOT let the raw text helper acquire EVIOCGRAB while
++            // controller A is still physically held.
++            //
++            // A commonly opens a text-capable child window (Save,
++            // Spellmaking, Enchanting, etc). Previously that window enabled
++            // SDL text input in the same frame as A-down, this reconcile
++            // immediately published /tmp/openmw-tsp-text-active, and the
++            // helper grabbed the evdev controller before SDL received A-up.
++            //
++            // SDL was then left believing A was still held, so the next
++            // physical A press produced no new SDL_CONTROLLERBUTTONDOWN.
++            //
++            // Waiting for the release lets SDL process the complete
++            // down/up pair first. On the following frame the helper may grab
++            // normally.
++            const bool tspAStillHeldForTextHandoff
++                = mControllerManager->isButtonPressed(
++                    SDL_CONTROLLER_BUTTON_A);
++
+             const bool tspWantHelper
+-                = tspTextEntryActive && !tspForceController && tspTextResetFrames == 0;
++                = tspTextEntryActive
++                && !tspForceController
++                && tspTextResetFrames == 0
++                && !tspAStillHeldForTextHandoff;
++            // TSP_TEXT_HELPER_WAIT_A_RELEASE_DIAG_051_V18
++            static bool tspWasWaitingForAReleaseV18 = false;
++
++            const bool tspWaitingForAReleaseV18
++                = tspTextEntryActive
++                && !tspForceController
++                && tspTextResetFrames == 0
++                && tspAStillHeldForTextHandoff;
++
++            if (tspWaitingForAReleaseV18
++                != tspWasWaitingForAReleaseV18)
++            {
++                if (std::FILE* tspADebugV18
++                    = std::fopen(
++                        "/tmp/openmw-tsp-a-debug",
++                        "r"))
++                {
++                    std::fclose(tspADebugV18);
++
++                    std::fprintf(
++                        stderr,
++                        "TSP_TEXT_HELPER_WAIT_A_RELEASE_V18 waiting=%d aHeld=%d text=%d\n",
++                        tspWaitingForAReleaseV18 ? 1 : 0,
++                        tspAStillHeldForTextHandoff ? 1 : 0,
++                        tspTextEntryActive ? 1 : 0);
++
++                    std::fflush(stderr);
++                }
++
++                tspWasWaitingForAReleaseV18
++                    = tspWaitingForAReleaseV18;
++            }
++
+             bool tspHaveFlag = false;
+             if (std::FILE* tspFlagFile = std::fopen("/tmp/openmw-tsp-text-active", "r"))
+             {
 diff --git a/apps/openmw/mwrender/localmap.cpp b/apps/openmw/mwrender/localmap.cpp
-index 5f2a3066..373b39d6 100644
+index 5f2a3066..de1ba34f 100644
 --- a/apps/openmw/mwrender/localmap.cpp
 +++ b/apps/openmw/mwrender/localmap.cpp
 @@ -9,6 +9,18 @@
@@ -1136,7 +2945,45 @@ index 5f2a3066..373b39d6 100644
      float square(float val)
      {
          return val * val;
-@@ -63,15 +125,580 @@ namespace
+@@ -44,6 +106,37 @@ namespace
+     // TSP_MAPLIFE_V2
+     static unsigned long tspMapLifeGeneration = 0;
+ 
++    // TSP_MAPMEM_V1
++    //
++    // Lightweight local-map lifetime accounting.  This deliberately
++    // counts OpenMW/OSG-side objects only; the launcher-side memory
++    // monitor records process/system/swap/driver pressure separately.
++    //
++    // A 256x256 RGBA CPU tile is 262144 bytes.  V7 keeps the osg::Image
++    // referenced by Texture2D, so counting live map textures with images
++    // gives us the directly attributable local-map CPU pixel footprint.
++    static unsigned long long tspMapMemLoads = 0;
++    static unsigned long long tspMapMemLoadFails = 0;
++    static unsigned long long tspMapMemSaves = 0;
++    static unsigned long long tspMapMemSaveFails = 0;
++    static unsigned long long tspMapMemRttCreated = 0;
++    static unsigned long long tspMapMemRttDestroyed = 0;
++    static unsigned long long tspMapMemExteriorErased = 0;
++    static unsigned long long tspMapMemSummarySeq = 0;
++
++    static std::size_t tspMapMemTextureBytes(osg::Texture2D* texture)
++    {
++        if (texture == nullptr)
++            return 0;
++
++        osg::Image* image = texture->getImage();
++
++        if (image == nullptr || image->data() == nullptr)
++            return 0;
++
++        return image->getTotalSizeInBytes();
++    }
++
+     static bool tspMapLifeEnabled()
+     {
+         return std::getenv("TSP_MAPLIFE") != nullptr
+@@ -63,15 +156,584 @@ namespace
  
  namespace MWRender
  {
@@ -1394,6 +3241,8 @@ index 5f2a3066..373b39d6 100644
 +                ++black;
 +            }
 +        }
++
++        ++tspMapMemLoads;
 +
 +        Log(Debug::Warning)
 +            << "TSP_LOCALMAP_PERSIST_V7 "
@@ -1674,6 +3523,8 @@ index 5f2a3066..373b39d6 100644
 +            }
 +        }
 +
++        ++tspMapMemSaves;
++
 +        Log(Debug::Warning)
 +            << "TSP_LOCALMAP_PERSIST_V7 "
 +               "CACHE_SAVE_PASS"
@@ -1718,7 +3569,7 @@ index 5f2a3066..373b39d6 100644
          osg::Matrix mProjectionMatrix;
          osg::Matrix mViewMatrix;
          bool mActive;
-@@ -84,6 +711,26 @@ namespace MWRender
+@@ -84,6 +746,26 @@ namespace MWRender
          void operator()(LocalMapRenderToTexture* node, osg::NodeVisitor* nv);
      };
  
@@ -1745,7 +3596,7 @@ index 5f2a3066..373b39d6 100644
      LocalMap::LocalMap(osg::Group* root)
          : mRoot(root)
          , mMapResolution(static_cast<int>(
-@@ -93,15 +740,84 @@ namespace MWRender
+@@ -93,15 +775,84 @@ namespace MWRender
          , mAngle(0.f)
          , mInterior(false)
      {
@@ -1830,7 +3681,7 @@ index 5f2a3066..373b39d6 100644
          if (tspMapLifeEnabled())
          {
              Log(Debug::Warning)
-@@ -126,6 +842,7 @@ namespace MWRender
+@@ -126,6 +877,7 @@ namespace MWRender
      void LocalMap::clear()
      {
          ++tspMapLifeGeneration;
@@ -1838,14 +3689,14 @@ index 5f2a3066..373b39d6 100644
  
          if (tspMapLifeEnabled())
          {
-@@ -134,14 +851,54 @@ namespace MWRender
+@@ -134,14 +886,54 @@ namespace MWRender
                  << " gen=" << tspMapLifeGeneration
                  << " ext=" << mExteriorSegments.size()
                  << " interior=" << mInteriorSegments.size()
 -                << " rtt=" << mLocalMapRTTs.size();
 +                << " rtt=" << tspRttBefore;
-+        }
-+
+         }
+ 
 +        // TSP_LOCALMAP_CAMERA_DRAIN_V13
 +        // A save-load clear is a hard lifetime boundary for one-shot PRE_RENDER
 +        // local-map RTT cameras. Do not leave them attached until a later GUI frame.
@@ -1872,8 +3723,8 @@ index 5f2a3066..373b39d6 100644
 +            {
 +                ++tspV7Flushed;
 +            }
-         }
- 
++        }
++
 +        Log(Debug::Warning)
 +            << "TSP_LOCALMAP_PERSIST_V7 "
 +               "CACHE_FLUSH_BEFORE_CLEAR"
@@ -1894,7 +3745,7 @@ index 5f2a3066..373b39d6 100644
              Log(Debug::Warning)
                  << "TSP_MAPLIFE_V2 phase=clear_end"
                  << " gen=" << tspMapLifeGeneration
-@@ -161,6 +918,15 @@ namespace MWRender
+@@ -161,6 +953,15 @@ namespace MWRender
                  return;
              const MapSegment& segment = it->second;
  
@@ -1910,7 +3761,7 @@ index 5f2a3066..373b39d6 100644
              if (segment.mFogOfWarImage && segment.mHasFogState)
              {
                  auto fog = std::make_unique<ESM::FogState>();
-@@ -208,33 +974,132 @@ namespace MWRender
+@@ -208,33 +1009,134 @@ namespace MWRender
          }
      }
  
@@ -2040,6 +3891,8 @@ index 5f2a3066..373b39d6 100644
 +        segment.mMapTexture
 +            = rtt->getMapTextureForSegment();
 +
++        ++tspMapMemRttCreated;
++
 +        Log(Debug::Warning)
 +            << "TSP_LOCALMAP_PERSIST_V7 "
 +               "RTT_CREATED"
@@ -2061,7 +3914,7 @@ index 5f2a3066..373b39d6 100644
      {
          if (!cell->isExterior())
          {
-@@ -242,23 +1107,144 @@ namespace MWRender
+@@ -242,23 +1144,144 @@ namespace MWRender
              return;
          }
  
@@ -2218,23 +4071,147 @@ index 5f2a3066..373b39d6 100644
      }
  
      void LocalMap::removeExteriorCell(int x, int y)
-@@ -283,6 +1269,15 @@ namespace MWRender
+@@ -283,6 +1306,32 @@ namespace MWRender
                  << " ext_before=" << mExteriorSegments.size();
          }
  
 +        if (it != mExteriorSegments.end())
 +        {
-+            tspLocalMapV7Save(
-+                x,
-+                y,
-+                mMapResolution,
-+                it->second.mMapTexture.get());
++            const std::size_t releasingBytes
++                = tspMapMemTextureBytes(
++                    it->second.mMapTexture.get());
++
++            const bool saved
++                = tspLocalMapV7Save(
++                    x,
++                    y,
++                    mMapResolution,
++                    it->second.mMapTexture.get());
++
++            if (!saved)
++                ++tspMapMemSaveFails;
++
++            ++tspMapMemExteriorErased;
++
++            Log(Debug::Warning)
++                << "TSP_MAPMEM_V1 RELEASE_EXT"
++                << " cell=" << x << "," << y
++                << " cpu_image_bytes=" << releasingBytes
++                << " saved=" << (saved ? 1 : 0)
++                << " ext_before=" << mExteriorSegments.size();
 +        }
 +
          mExteriorSegments.erase({ x, y });
      }
  
-@@ -829,11 +1824,112 @@ namespace MWRender
+@@ -333,6 +1382,8 @@ namespace MWRender
+                 it++;
+         }
+ 
++        tspMapMemRttDestroyed += removed;
++
+         if (tspMapLifeEnabled() && removed)
+         {
+             Log(Debug::Warning)
+@@ -344,6 +1395,97 @@ namespace MWRender
+                 << " ext=" << mExteriorSegments.size()
+                 << " interior=" << mInteriorSegments.size();
+         }
++
++        /*
++         * Do not scan every frame.  Once every 300 cleanup calls is
++         * enough to correlate local-map residency with the external
++         * 10-second memory sampler, while keeping logging negligible.
++         */
++        ++tspMapMemSummarySeq;
++
++        if (removed != 0 || (tspMapMemSummarySeq % 300) == 0)
++        {
++            std::size_t exteriorTextureCount = 0;
++            std::size_t exteriorCpuBytes = 0;
++            std::size_t exteriorFogBytes = 0;
++
++            for (const auto& entry : mExteriorSegments)
++            {
++                const MapSegment& seg = entry.second;
++
++                if (seg.mMapTexture)
++                {
++                    ++exteriorTextureCount;
++                    exteriorCpuBytes
++                        += tspMapMemTextureBytes(
++                            seg.mMapTexture.get());
++                }
++
++                if (seg.mFogOfWarImage)
++                    exteriorFogBytes
++                        += seg.mFogOfWarImage
++                               ->getTotalSizeInBytes();
++            }
++
++            std::size_t interiorTextureCount = 0;
++            std::size_t interiorCpuBytes = 0;
++            std::size_t interiorFogBytes = 0;
++
++            for (const auto& entry : mInteriorSegments)
++            {
++                const MapSegment& seg = entry.second;
++
++                if (seg.mMapTexture)
++                {
++                    ++interiorTextureCount;
++                    interiorCpuBytes
++                        += tspMapMemTextureBytes(
++                            seg.mMapTexture.get());
++                }
++
++                if (seg.mFogOfWarImage)
++                    interiorFogBytes
++                        += seg.mFogOfWarImage
++                               ->getTotalSizeInBytes();
++            }
++
++            std::size_t activeRttCpuBytes = 0;
++            std::size_t activeRttReadbackBytes = 0;
++
++            for (const auto& rtt : mLocalMapRTTs)
++            {
++                if (!rtt)
++                    continue;
++
++                if (rtt->mTspCpuImage)
++                    activeRttCpuBytes
++                        += rtt->mTspCpuImage
++                               ->getTotalSizeInBytes();
++
++                activeRttReadbackBytes
++                    += rtt->mTspReadbackBuffer.size();
++            }
++
++            Log(Debug::Warning)
++                << "TSP_MAPMEM_V1 SUMMARY"
++                << " ext_segments=" << mExteriorSegments.size()
++                << " ext_textures=" << exteriorTextureCount
++                << " ext_cpu_bytes=" << exteriorCpuBytes
++                << " ext_fog_bytes=" << exteriorFogBytes
++                << " int_segments=" << mInteriorSegments.size()
++                << " int_textures=" << interiorTextureCount
++                << " int_cpu_bytes=" << interiorCpuBytes
++                << " int_fog_bytes=" << interiorFogBytes
++                << " active_rtt=" << mLocalMapRTTs.size()
++                << " rtt_cpu_bytes=" << activeRttCpuBytes
++                << " rtt_readback_bytes=" << activeRttReadbackBytes
++                << " loads=" << tspMapMemLoads
++                << " saves=" << tspMapMemSaves
++                << " save_fail=" << tspMapMemSaveFails
++                << " rtt_created=" << tspMapMemRttCreated
++                << " rtt_destroyed=" << tspMapMemRttDestroyed
++                << " ext_erased=" << tspMapMemExteriorErased;
++        }
+     }
+ 
+     void LocalMap::requestExteriorMap(const MWWorld::CellStore* cell, MapSegment& segment)
+@@ -829,11 +1971,112 @@ namespace MWRender
      }
  
      LocalMapRenderToTexture::LocalMapRenderToTexture(osg::Node* sceneRoot, int res, int mapWorldSize, float x, float y,
@@ -2348,7 +4325,7 @@ index 5f2a3066..373b39d6 100644
          setNodeMask(Mask_RenderToTexture);
  
          if (SceneUtil::AutoDepth::isReversed())
-@@ -849,6 +1945,217 @@ namespace MWRender
+@@ -849,6 +2092,217 @@ namespace MWRender
          setDepthBufferInternalFormat(GL_DEPTH24_STENCIL8);
      }
  
@@ -2566,7 +4543,7 @@ index 5f2a3066..373b39d6 100644
      void LocalMapRenderToTexture::setDefaults(osg::Camera* camera)
      {
          // Disable small feature culling, it's not going to be reliable for this camera
-@@ -859,7 +2166,46 @@ namespace MWRender
+@@ -859,7 +2313,46 @@ namespace MWRender
          SceneUtil::setCameraClearDepth(camera);
          camera->setComputeNearFarMode(osg::Camera::DO_NOT_COMPUTE_NEAR_FAR);
          camera->setReferenceFrame(osg::Camera::ABSOLUTE_RF_INHERIT_VIEWPOINT);
@@ -2614,7 +4591,7 @@ index 5f2a3066..373b39d6 100644
          camera->setClearColor(osg::Vec4(0.f, 0.f, 0.f, 1.f));
          camera->setClearMask(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
          camera->setRenderOrder(osg::Camera::PRE_RENDER);
-@@ -921,33 +2267,87 @@ namespace MWRender
+@@ -921,33 +2414,87 @@ namespace MWRender
          camera->addChild(mSceneRoot);
      }
  
@@ -2834,8 +4811,247 @@ index 26b4a8b6..d3f21345 100644
  }
  
  void MWState::StateManager::printSavegameFormatError(
+diff --git a/apps/openmw/mwworld/cellpreloader.cpp b/apps/openmw/mwworld/cellpreloader.cpp
+index 9824fa3a..a92b1955 100644
+--- a/apps/openmw/mwworld/cellpreloader.cpp
++++ b/apps/openmw/mwworld/cellpreloader.cpp
+@@ -2,9 +2,16 @@
+ 
+ #include <algorithm>
+ #include <atomic>
++#include <chrono>
++#include <cstdint>
++#include <cstdlib>
+ #include <limits>
+ #include <span>
+ 
++#if defined(__linux__) && defined(__GLIBC__)
++#include <malloc.h>
++#endif
++
+ #include <osg/Stats>
+ 
+ #include <components/debug/debuglog.hpp>
+@@ -48,6 +55,34 @@ namespace MWWorld
+             const auto predicate = [&](const PositionCellGrid& v) { return contains(container, v, tolerance); };
+             return std::ranges::all_of(contained, predicate);
+         }
++
++        // TSP_BGALLOC_V1
++        bool tspBgAllocEnabled()
++        {
++            static const bool enabled = [] {
++                const char* value = std::getenv("TSP_BGALLOC");
++                return value != nullptr && value[0] == '1';
++            }();
++
++            return enabled;
++        }
++
++        std::int64_t tspBgAllocInUse()
++        {
++#if defined(__linux__) && defined(__GLIBC__)
++            const struct mallinfo info = ::mallinfo();
++            return static_cast<std::int64_t>(info.uordblks);
++#else
++            return -1;
++#endif
++        }
++
++        std::int64_t tspBgAllocElapsedMs(
++            const std::chrono::steady_clock::time_point& start)
++        {
++            return std::chrono::duration_cast<std::chrono::milliseconds>(
++                std::chrono::steady_clock::now() - start).count();
++        }
+     }
+ 
+     struct ListModelsVisitor
+@@ -92,6 +127,11 @@ namespace MWWorld
+         /// Preload work to be called from the worker thread.
+         void doWork() override
+         {
++            const bool tspDiag = tspBgAllocEnabled();
++            const auto tspStart = std::chrono::steady_clock::now();
++            const std::int64_t tspBefore
++                = tspDiag ? tspBgAllocInUse() : -1;
++
+             if (mIsExterior)
+             {
+                 try
+@@ -144,6 +184,22 @@ namespace MWWorld
+                                         << e.what();
+                 }
+             }
++
++            if (tspDiag)
++            {
++                const std::int64_t tspAfter = tspBgAllocInUse();
++
++                Log(Debug::Info)
++                    << "[TSP_BGALLOC_V1]"
++                    << " kind=cell_preload"
++                    << " cell=" << mCellId
++                    << " meshes=" << mMeshes.size()
++                    << " held_objects=" << mPreloadedObjects.size()
++                    << " elapsed_ms=" << tspBgAllocElapsedMs(tspStart)
++                    << " inuse_before=" << tspBefore
++                    << " inuse_after=" << tspAfter
++                    << " delta=" << (tspAfter - tspBefore);
++            }
+         }
+ 
+     private:
+@@ -180,17 +236,46 @@ namespace MWWorld
+ 
+         void doWork() override
+         {
++            const bool tspDiag = tspBgAllocEnabled();
++            const auto tspStart = std::chrono::steady_clock::now();
++            const std::int64_t tspBefore
++                = tspDiag ? tspBgAllocInUse() : -1;
++
+             for (unsigned int i = 0; i < mTerrainViews.size() && i < mPreloadPositions.size() && !mAbort; ++i)
+             {
+                 mTerrainViews[i]->reset();
+                 mWorld->preload(mTerrainViews[i], mPreloadPositions[i].mPosition, mPreloadPositions[i].mCellBounds,
+                     mAbort, mLoadingReporter);
+             }
++
+             mLoadingReporter.complete();
++
++            if (tspDiag)
++            {
++                const std::int64_t tspAfter = tspBgAllocInUse();
++
++                Log(Debug::Info)
++                    << "[TSP_BGALLOC_V1]"
++                    << " kind=terrain_preload"
++                    << " positions=" << mPreloadPositions.size()
++                    << " elapsed_ms=" << tspBgAllocElapsedMs(tspStart)
++                    << " inuse_before=" << tspBefore
++                    << " inuse_after=" << tspAfter
++                    << " delta=" << (tspAfter - tspBefore);
++            }
+         }
+ 
+         void abort() override { mAbort = true; }
+ 
++        // TSP_TERRAIN_VIEW_RELEASE_V1
++        // Once the preload has completed, the generated terrain/object chunks
++        // remain owned by their normal ResourceSystem caches. The temporary
++        // preload ViewData scene graphs no longer need to remain resident.
++        std::vector<osg::ref_ptr<Terrain::View>> takeViews()
++        {
++            return std::move(mTerrainViews);
++        }
++
+         void wait(Loading::Listener& listener) const { mLoadingReporter.wait(listener); }
+ 
+     private:
+@@ -201,6 +286,27 @@ namespace MWWorld
+         Loading::Reporter mLoadingReporter;
+     };
+ 
++    // TSP_TERRAIN_VIEW_RELEASE_V1
++    // Release completed terrain preload view graphs on a worker thread.
++    // Their underlying terrain/object chunks remain in their normal caches.
++    class ReleaseTerrainViewsItem : public SceneUtil::WorkItem
++    {
++    public:
++        explicit ReleaseTerrainViewsItem(
++            std::vector<osg::ref_ptr<Terrain::View>> views)
++            : mViews(std::move(views))
++        {
++        }
++
++        void doWork() override
++        {
++            mViews.clear();
++        }
++
++    private:
++        std::vector<osg::ref_ptr<Terrain::View>> mViews;
++    };
++
+     /// Worker thread item: update the resource system's cache, effectively deleting unused entries.
+     class UpdateCacheItem : public SceneUtil::WorkItem
+     {
+@@ -211,7 +317,33 @@ namespace MWWorld
+         {
+         }
+ 
+-        void doWork() override { mResourceSystem->updateCache(mReferenceTime); }
++        void doWork() override
++        {
++            const bool tspDiag = tspBgAllocEnabled();
++            const auto tspStart = std::chrono::steady_clock::now();
++            const std::int64_t tspBefore
++                = tspDiag ? tspBgAllocInUse() : -1;
++
++            mResourceSystem->updateCache(mReferenceTime);
++
++            if (tspDiag)
++            {
++                const std::int64_t tspAfter = tspBgAllocInUse();
++                const std::int64_t tspDelta = tspAfter - tspBefore;
++                const std::int64_t tspMs = tspBgAllocElapsedMs(tspStart);
++
++                if (tspDelta >= 65536 || tspDelta <= -65536 || tspMs >= 20)
++                {
++                    Log(Debug::Info)
++                        << "[TSP_BGALLOC_V1]"
++                        << " kind=resource_update"
++                        << " elapsed_ms=" << tspMs
++                        << " inuse_before=" << tspBefore
++                        << " inuse_after=" << tspAfter
++                        << " delta=" << tspDelta;
++                }
++            }
++        }
+ 
+     private:
+         double mReferenceTime;
+@@ -351,6 +483,37 @@ namespace MWWorld
+         {
+             mLoadedTerrainPositions = mTerrainPreloadPositions;
+             mLoadedTerrainTimestamp = timestamp;
++
++            // TSP_TERRAIN_VIEW_RELEASE_V1
++            //
++            // The expensive chunk nodes created by preload() are already in
++            // ChunkManager/ObjectPaging/Groundcover caches. Keeping the
++            // independent preload ViewData graphs as well only adds another
++            // strong-reference tree.
++            //
++            // Move the final view refs to a worker so releasing a large view
++            // cannot create a destructor hitch on the gameplay thread.
++            auto tspFinishedViews = mTerrainPreloadItem->takeViews();
++
++            // TSP_TERRAIN_VIEW_KEEPDONE_V2
++            //
++            // Keep the completed WorkItem object alive. The original
++            // CellPreloader logic intentionally leaves a completed item here,
++            // which refreshes mLoadedTerrainTimestamp on later updateCache()
++            // calls until a genuinely different terrain target replaces it.
++            //
++            // Its heavy ViewData refs have already been moved out by
++            // takeViews(), so retaining this tiny completed WorkItem does NOT
++            // retain the preload scene graphs.
++            mTerrainViews.clear();
++
++            if (!tspFinishedViews.empty())
++            {
++                osg::ref_ptr<ReleaseTerrainViewsItem> tspRelease
++                    = new ReleaseTerrainViewsItem(std::move(tspFinishedViews));
++
++                mWorkQueue->addWorkItem(tspRelease, true);
++            }
+         }
+     }
+ 
 diff --git a/apps/openmw/mwworld/scene.cpp b/apps/openmw/mwworld/scene.cpp
-index 2b889262..d691ce75 100644
+index 2b889262..b00040a6 100644
 --- a/apps/openmw/mwworld/scene.cpp
 +++ b/apps/openmw/mwworld/scene.cpp
 @@ -650,213 +650,6 @@ if (shouldLive)
@@ -3080,6 +5296,46 @@ index 2b889262..d691ce75 100644
          // TSP_ROOM_OBJECT_ADAPTIVE_051_V27
          // Parked V25/V26 refs borrowed mPagedRefs only as a scene-side sentinel.
          // Purge those temporary entries BEFORE normal cell teardown so shutdown or
+@@ -1774,7 +1553,38 @@ if (shouldLive)
+                 preloadFastTravelDestinations(playerPos, exteriorPositions);
+         }
+ 
+-        mPreloader->setTerrainPreloadPositions(exteriorPositions);
++        // TSP_TERRAIN_PRELOAD_DEDUP_V1
++        //
++        // Do not repeatedly rebuild terrain that CellPreloader already
++        // considers valid for these exact target grids. isTerrainLoaded()
++        // already applies the normal terrain expiry time and the same
++        // positional tolerance used by cell-transition readiness.
++        //
++        // BGALLOC_V1 measured thousands of redundant TerrainPreloadItems
++        // during ordinary exterior traversal. Keep predictive preloading,
++        // but only issue new work when at least one requested target is
++        // genuinely not resident anymore.
++        bool tspTerrainReady = !exteriorPositions.empty();
++
++        if (tspTerrainReady)
++        {
++            const double tspReferenceTime = mRendering.getReferenceTime();
++
++            for (const PositionCellGrid& tspPosition : exteriorPositions)
++            {
++                if (!mPreloader->isTerrainLoaded(
++                        tspPosition, tspReferenceTime))
++                {
++                    tspTerrainReady = false;
++                    break;
++                }
++            }
++        }
++
++        // Empty positions still need to clear exterior terrain preload state
++        // when leaving exterior gameplay.
++        if (!tspTerrainReady || exteriorPositions.empty())
++            mPreloader->setTerrainPreloadPositions(exteriorPositions);
+     }
+ 
+     void Scene::preloadTeleportDoorDestinations(const osg::Vec3f& playerPos, const osg::Vec3f& predictedPos)
 diff --git a/apps/openmw/mwworld/scene.hpp b/apps/openmw/mwworld/scene.hpp
 index d4b7b940..a63d512f 100644
 --- a/apps/openmw/mwworld/scene.hpp
@@ -3509,6 +5765,534 @@ index e460f04d..bbcee443 100644
      else
          Log(Debug::Warning) << "Installing crash handler failed";
  }
+diff --git a/components/resource/objectcache.hpp b/components/resource/objectcache.hpp
+index 71e6c17e..d06f88c9 100644
+--- a/components/resource/objectcache.hpp
++++ b/components/resource/objectcache.hpp
+@@ -27,14 +27,25 @@
+ #include <osg/ref_ptr>
+ 
+ #include <algorithm>
++#include <atomic>
++#include <chrono>
++#include <condition_variable>
+ #include <cstddef>
+ #include <cstdlib>
++#include <deque>
+ #include <map>
+ #include <mutex>
+ #include <optional>
+ #include <string>
++#include <thread>
+ #include <vector>
+ 
++#if defined(__linux__)
++#include <unistd.h>
++#endif
++
++#include <components/debug/debuglog.hpp>
++
+ namespace osg
+ {
+     class Object;
+@@ -51,19 +62,163 @@ namespace Resource
+         double mLastUsage;
+     };
+ 
+- // TSP_EXPIRY_BUDGET_V1
+-    // Objects per updateCache() call to actually destroy. 0 = original
+-    // all-at-once behaviour. Read once, from TSP_EXPIRY_BUDGET.
+-    inline std::size_t tspExpiryBudget()
++    // TSP_ASYNC_RECLAIM_V1
++    //
++    // GenericObjectCache already knows whether a resource is truly unused:
++    // its cache reference is the only reference and mLastUsage is older than
++    // the configured expiry delay.
++    //
++    // The previous TSP expiry-budget patch removed those entries from the
++    // cache but retained their ref_ptrs in mTspPending. That traded a frame
++    // hitch for retained RAM.
++    //
++    // This reclaimer preserves the existing expiry semantics and preloader.
++    // Truly expired objects are removed immediately from the cache, then their
++    // final ref is released on a low-priority background thread one object at
++    // a time. Nothing that is active or held by the preloader can enter here.
++
++    class TspAsyncObjectReclaimer
++    {
++    public:
++        TspAsyncObjectReclaimer()
++            : mThread([this] { run(); })
++        {
++        }
++
++        ~TspAsyncObjectReclaimer()
++        {
++            {
++                std::lock_guard<std::mutex> lock(mMutex);
++                mStop = true;
++            }
++
++            mCondition.notify_all();
++
++            if (mThread.joinable())
++                mThread.join();
++        }
++
++        TspAsyncObjectReclaimer(const TspAsyncObjectReclaimer&) = delete;
++        TspAsyncObjectReclaimer& operator=(
++            const TspAsyncObjectReclaimer&) = delete;
++
++        void enqueue(std::vector<osg::ref_ptr<osg::Object>>&& objects)
++        {
++            if (objects.empty())
++                return;
++
++            const std::size_t count = objects.size();
++
++            {
++                std::lock_guard<std::mutex> lock(mMutex);
++
++                for (auto& object : objects)
++                {
++                    if (object)
++                        mQueue.push_back(std::move(object));
++                }
++            }
++
++            mQueued.fetch_add(count, std::memory_order_relaxed);
++            mCondition.notify_one();
++        }
++
++    private:
++        static bool diagnosticsEnabled()
++        {
++            static const bool enabled = [] {
++                const char* value = std::getenv("TSP_RECLAIM_DIAG");
++                return value != nullptr && value[0] == '1';
++            }();
++
++            return enabled;
++        }
++
++        void run()
++        {
++#if defined(__linux__)
++            // The device normally pins OpenMW heavily. Make cleanup yield CPU
++            // to the main/render path instead of producing periodic hitches.
++            ::nice(10);
++#endif
++
++            auto lastDiagnostic
++                = std::chrono::steady_clock::now();
++
++            for (;;)
++            {
++                osg::ref_ptr<osg::Object> object;
++                std::size_t pendingAfter = 0;
++
++                {
++                    std::unique_lock<std::mutex> lock(mMutex);
++
++                    mCondition.wait(lock, [this] {
++                        return mStop || !mQueue.empty();
++                    });
++
++                    if (mStop)
++                        return;
++
++                    object = std::move(mQueue.front());
++                    mQueue.pop_front();
++                    pendingAfter = mQueue.size();
++                }
++
++                // The destructor runs HERE, outside the cache mutex and
++                // outside OpenMW's normal resource-cache update worker.
++                object = nullptr;
++
++                const std::size_t reclaimed
++                    = mReclaimed.fetch_add(
++                          1, std::memory_order_relaxed)
++                    + 1;
++
++                // Never monopolize the single gameplay CPU. One millisecond
++                // between objects still clears hundreds of dead objects in
++                // seconds instead of retaining them for minutes.
++                std::this_thread::sleep_for(
++                    std::chrono::milliseconds(1));
++
++                if (diagnosticsEnabled())
++                {
++                    const auto now
++                        = std::chrono::steady_clock::now();
++
++                    if (now - lastDiagnostic
++                        >= std::chrono::seconds(5))
++                    {
++                        lastDiagnostic = now;
++
++                        Log(Debug::Info)
++                            << "[TSP_RECLAIM_V1]"
++                            << " queued_total="
++                            << mQueued.load(
++                                   std::memory_order_relaxed)
++                            << " reclaimed_total="
++                            << reclaimed
++                            << " pending="
++                            << pendingAfter;
++                    }
++                }
++            }
++        }
++
++        std::mutex mMutex;
++        std::condition_variable mCondition;
++        std::deque<osg::ref_ptr<osg::Object>> mQueue;
++        bool mStop = false;
++
++        std::atomic<std::size_t> mQueued{ 0 };
++        std::atomic<std::size_t> mReclaimed{ 0 };
++
++        std::thread mThread;
++    };
++
++    inline TspAsyncObjectReclaimer& tspAsyncObjectReclaimer()
+     {
+-        static const std::size_t sTspBudget = []() -> std::size_t {
+-            const char* tspEnv = std::getenv("TSP_EXPIRY_BUDGET");
+-            if (tspEnv == nullptr || tspEnv[0] == '\0')
+-                return 16;
+-            const long tspVal = std::atol(tspEnv);
+-            return tspVal > 0 ? static_cast<std::size_t>(tspVal) : 0;
+-        }();
+-        return sTspBudget;
++        static TspAsyncObjectReclaimer reclaimer;
++        return reclaimer;
+     }
+ 
+     template <typename KeyType>
+@@ -112,47 +267,40 @@ namespace Resource
+                     return true;
+                 });
+             }
+-            // TSP_EXPIRY_BUDGET_V1
+-            // Destroying every expired object here runs all their destructors on
+-            // the main thread in one frame. Measured on device: 440 nif node
+-            // graphs in a single frame -> 155 ms, with only 13 ms of rendering
+-            // in it. Spread the destruction over frames instead.
+-            const std::size_t tspBudget = tspExpiryBudget();
+-            if (tspBudget == 0)
+-            {
+-                objectsToRemove.clear();
+-                return;
+-            }
+-            std::vector<osg::ref_ptr<osg::Object>> tspBatch;
+-            {
+-                std::lock_guard<std::mutex> tspLock(mTspPendingMutex);
+-                for (auto& tspObj : objectsToRemove)
+-                    mTspPending.push_back(std::move(tspObj));
+-                objectsToRemove.clear();
+-                std::size_t tspTake = std::min(tspBudget, mTspPending.size());
+-                // Safety valve: never let the backlog grow without bound.
+-                if (mTspPending.size() > tspBudget * 64)
+-                    tspTake = mTspPending.size();
+-                tspBatch.reserve(tspTake);
+-                for (std::size_t tspI = 0; tspI < tspTake; ++tspI)
+-                {
+-                    tspBatch.push_back(std::move(mTspPending.back()));
+-                    mTspPending.pop_back();
+-                }
+-            }
+-            tspBatch.clear();
++            // TSP_ASYNC_RECLAIM_V1
++            //
++            // These objects have already exceeded the normal cache expiry
++            // delay and no external owner is using them. Transfer their final
++            // cache refs to the asynchronous reclaimer instead of retaining a
++            // large pending backlog or destroying them in this cache-update
++            // call.
++            tspAsyncObjectReclaimer().enqueue(
++                std::move(objectsToRemove));
+         }
+ 
+         /** Remove all objects in the cache regardless of having external references or expiry times.*/
+         void clear()
+         {
+-            std::lock_guard<std::mutex> lock(mMutex);
+-            mItems.clear();
+-            // TSP_EXPIRY_BUDGET_V1
++            std::vector<osg::ref_ptr<osg::Object>> objectsToRemove;
++
+             {
+-                std::lock_guard<std::mutex> tspLock(mTspPendingMutex);
+-                mTspPending.clear();
++                std::lock_guard<std::mutex> lock(mMutex);
++
++                objectsToRemove.reserve(mItems.size());
++
++                for (auto& [key, item] : mItems)
++                {
++                    if (item.mValue)
++                        objectsToRemove.push_back(
++                            std::move(item.mValue));
++                }
++
++                mItems.clear();
+             }
++
++            // TSP_ASYNC_RECLAIM_V1
++            tspAsyncObjectReclaimer().enqueue(
++                std::move(objectsToRemove));
+         }
+ 
+         /** Add a key,object,timestamp triple to the Registry::ObjectCache.*/
+@@ -261,9 +409,6 @@ namespace Resource
+         std::size_t mGet = 0;
+         std::size_t mHit = 0;
+         std::size_t mExpired = 0;
+-        // TSP_EXPIRY_BUDGET_V1
+-        std::vector<osg::ref_ptr<osg::Object>> mTspPending;
+-        std::mutex mTspPendingMutex;
+ 
+         Item* find(const auto& key)
+         {
+diff --git a/components/resource/scenemanager.cpp b/components/resource/scenemanager.cpp
+index 40b176c7..a1cdd4da 100644
+--- a/components/resource/scenemanager.cpp
++++ b/components/resource/scenemanager.cpp
+@@ -232,10 +232,12 @@ namespace Resource
+     {
+     public:
+         SetFilterSettingsControllerVisitor(
+-            osg::Texture::FilterMode minFilter, osg::Texture::FilterMode magFilter, float maxAnisotropy)
++            osg::Texture::FilterMode minFilter, osg::Texture::FilterMode magFilter,
++            float maxAnisotropy, bool unRefImageDataAfterApply)
+             : mMinFilter(minFilter)
+             , mMagFilter(magFilter)
+             , mMaxAnisotropy(maxAnisotropy)
++            , mUnRefImageDataAfterApply(unRefImageDataAfterApply)
+         {
+         }
+ 
+@@ -248,6 +250,12 @@ namespace Resource
+                     tex->setFilter(osg::Texture::MIN_FILTER, tspSafeMinFilter(tex.get(), mMinFilter));
+                     tex->setFilter(osg::Texture::MAG_FILTER, mMagFilter);
+                     tex->setMaxAnisotropy(mMaxAnisotropy);
++
++                    // TSP_TEXTURE_CPU_RELEASE_V1
++                    // Once OSG has safely uploaded this static texture to all
++                    // contexts, the source osg::Image no longer needs to remain
++                    // attached to the GPU-resident texture.
++                    tex->setUnRefImageDataAfterApply(mUnRefImageDataAfterApply);
+                 }
+             }
+         }
+@@ -256,6 +264,7 @@ namespace Resource
+         osg::Texture::FilterMode mMinFilter;
+         osg::Texture::FilterMode mMagFilter;
+         float mMaxAnisotropy;
++        bool mUnRefImageDataAfterApply;
+     };
+ 
+     /// Set texture filtering settings on textures contained in StateSets.
+@@ -263,11 +272,13 @@ namespace Resource
+     {
+     public:
+         SetFilterSettingsVisitor(
+-            osg::Texture::FilterMode minFilter, osg::Texture::FilterMode magFilter, float maxAnisotropy)
++            osg::Texture::FilterMode minFilter, osg::Texture::FilterMode magFilter,
++            float maxAnisotropy, bool unRefImageDataAfterApply)
+             : osg::NodeVisitor(TRAVERSE_ALL_CHILDREN)
+             , mMinFilter(minFilter)
+             , mMagFilter(magFilter)
+             , mMaxAnisotropy(maxAnisotropy)
++            , mUnRefImageDataAfterApply(unRefImageDataAfterApply)
+         {
+         }
+ 
+@@ -299,6 +310,9 @@ namespace Resource
+                 tex->setFilter(osg::Texture::MIN_FILTER, tspSafeMinFilter(tex, mMinFilter));
+                 tex->setFilter(osg::Texture::MAG_FILTER, mMagFilter);
+                 tex->setMaxAnisotropy(mMaxAnisotropy);
++
++                // TSP_TEXTURE_CPU_RELEASE_V1
++                tex->setUnRefImageDataAfterApply(mUnRefImageDataAfterApply);
+             }
+         }
+ 
+@@ -306,6 +320,7 @@ namespace Resource
+         osg::Texture::FilterMode mMinFilter;
+         osg::Texture::FilterMode mMagFilter;
+         float mMaxAnisotropy;
++        bool mUnRefImageDataAfterApply;
+     };
+ 
+     // Check Collada extra descriptions
+@@ -1058,10 +1073,11 @@ namespace Resource
+             }
+ 
+             // set filtering settings
+-            SetFilterSettingsVisitor setFilterSettingsVisitor(mMinFilter, mMagFilter, mMaxAnisotropy);
++            SetFilterSettingsVisitor setFilterSettingsVisitor(
++                mMinFilter, mMagFilter, mMaxAnisotropy, mUnRefImageDataAfterApply);
+             loaded->accept(setFilterSettingsVisitor);
+             SetFilterSettingsControllerVisitor setFilterSettingsControllerVisitor(
+-                mMinFilter, mMagFilter, mMaxAnisotropy);
++                mMinFilter, mMagFilter, mMaxAnisotropy, mUnRefImageDataAfterApply);
+             loaded->accept(setFilterSettingsControllerVisitor);
+ 
+             osg::ref_ptr<Shader::ShaderVisitor> shaderVisitor(createShaderVisitor());
+@@ -1214,8 +1230,10 @@ namespace Resource
+         mMagFilter = mag;
+         mMaxAnisotropy = std::max(1.f, maxAnisotropy);
+ 
+-        SetFilterSettingsControllerVisitor setFilterSettingsControllerVisitor(mMinFilter, mMagFilter, mMaxAnisotropy);
+-        SetFilterSettingsVisitor setFilterSettingsVisitor(mMinFilter, mMagFilter, mMaxAnisotropy);
++        SetFilterSettingsControllerVisitor setFilterSettingsControllerVisitor(
++            mMinFilter, mMagFilter, mMaxAnisotropy, mUnRefImageDataAfterApply);
++        SetFilterSettingsVisitor setFilterSettingsVisitor(
++            mMinFilter, mMagFilter, mMaxAnisotropy, mUnRefImageDataAfterApply);
+ 
+         mCache->accept(setFilterSettingsVisitor);
+         mCache->accept(setFilterSettingsControllerVisitor);
+@@ -1227,6 +1245,9 @@ namespace Resource
+         tex->setFilter(osg::Texture::MIN_FILTER, tspSafeMinFilter(tex, mMinFilter));
+         tex->setFilter(osg::Texture::MAG_FILTER, mMagFilter);
+         tex->setMaxAnisotropy(mMaxAnisotropy);
++
++        // TSP_TEXTURE_CPU_RELEASE_V1
++        tex->setUnRefImageDataAfterApply(mUnRefImageDataAfterApply);
+     }
+ 
+     void SceneManager::setUnRefImageDataAfterApply(bool unref)
+diff --git a/components/sdlutil/sdlinputwrapper.cpp b/components/sdlutil/sdlinputwrapper.cpp
+index 8bb802bb..b082350c 100644
+--- a/components/sdlutil/sdlinputwrapper.cpp
++++ b/components/sdlutil/sdlinputwrapper.cpp
+@@ -3,6 +3,10 @@
+ #include <components/debug/debuglog.hpp>
+ #include <components/settings/values.hpp>
+ 
++#include <cstdio>
++
++#include <SDL.h>
++
+ #include <osgViewer/Viewer>
+ 
+ namespace SDLUtil
+@@ -66,7 +70,48 @@ namespace SDLUtil
+                 handleWindowEvent(evt);
+ 
+             SDL_FlushEvent(SDL_KEYDOWN);
+-            SDL_FlushEvent(SDL_CONTROLLERBUTTONDOWN);
++
++            // TSP_A_SDL_DISCARD_V17
++            //
++            // Preserve the normal discard behavior, but when the A-debug
++            // launcher gate is armed, inspect discarded controller DOWN
++            // events before throwing them away.
++            bool tspADebugGateV17 = false;
++
++            if (std::FILE* tspFlagV17
++                = std::fopen("/tmp/openmw-tsp-a-debug", "r"))
++            {
++                tspADebugGateV17 = true;
++                std::fclose(tspFlagV17);
++            }
++
++            if (tspADebugGateV17)
++            {
++                while (SDL_PeepEvents(
++                           &evt,
++                           1,
++                           SDL_GETEVENT,
++                           SDL_CONTROLLERBUTTONDOWN,
++                           SDL_CONTROLLERBUTTONDOWN) > 0)
++                {
++                    if (evt.cbutton.button
++                        == SDL_CONTROLLER_BUTTON_A)
++                    {
++                        Log(Debug::Warning)
++                            << "TSP_A_SDL_DISCARD_V17"
++                            << " event=down"
++                            << " ticks=" << SDL_GetTicks()
++                            << " which=" << evt.cbutton.which
++                            << " reason=windowEventsOnly";
++                    }
++                }
++            }
++            else
++            {
++                SDL_FlushEvent(
++                    SDL_CONTROLLERBUTTONDOWN);
++            }
++
+             SDL_FlushEvent(SDL_MOUSEBUTTONDOWN);
+             SDL_FlushEvent(SDL_MOUSEMOTION);
+             SDL_FlushEvent(SDL_MOUSEWHEEL);
+@@ -162,12 +207,60 @@ namespace SDLUtil
+                         mConListener->controllerRemoved(evt.cdevice);
+                     break;
+                 case SDL_CONTROLLERBUTTONDOWN:
++                    // TSP_A_SDL_EDGE_V17
++                    if (evt.cbutton.button
++                        == SDL_CONTROLLER_BUTTON_A)
++                    {
++                        if (std::FILE* tspFlagV17
++                            = std::fopen(
++                                "/tmp/openmw-tsp-a-debug",
++                                "r"))
++                        {
++                            std::fclose(tspFlagV17);
++
++                            Log(Debug::Warning)
++                                << "TSP_A_SDL_EDGE_V17"
++                                << " event=down"
++                                << " ticks=" << SDL_GetTicks()
++                                << " timestamp="
++                                << evt.cbutton.timestamp
++                                << " which="
++                                << evt.cbutton.which;
++                        }
++                    }
++
+                     if (mConListener)
+-                        mConListener->buttonPressed(1, evt.cbutton);
++                        mConListener->buttonPressed(
++                            1,
++                            evt.cbutton);
+                     break;
+                 case SDL_CONTROLLERBUTTONUP:
++                    // TSP_A_SDL_EDGE_V17
++                    if (evt.cbutton.button
++                        == SDL_CONTROLLER_BUTTON_A)
++                    {
++                        if (std::FILE* tspFlagV17
++                            = std::fopen(
++                                "/tmp/openmw-tsp-a-debug",
++                                "r"))
++                        {
++                            std::fclose(tspFlagV17);
++
++                            Log(Debug::Warning)
++                                << "TSP_A_SDL_EDGE_V17"
++                                << " event=up"
++                                << " ticks=" << SDL_GetTicks()
++                                << " timestamp="
++                                << evt.cbutton.timestamp
++                                << " which="
++                                << evt.cbutton.which;
++                        }
++                    }
++
+                     if (mConListener)
+-                        mConListener->buttonReleased(1, evt.cbutton);
++                        mConListener->buttonReleased(
++                            1,
++                            evt.cbutton);
+                     break;
+                 case SDL_CONTROLLERAXISMOTION:
+                     if (mConListener)
 diff --git a/files/data/mygui/openmw_chargen_class.layout b/files/data/mygui/openmw_chargen_class.layout
 index c1074f94..68989363 100644
 --- a/files/data/mygui/openmw_chargen_class.layout

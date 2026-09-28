@@ -435,65 +435,8 @@ namespace MWInput
             }
             if (tspTextResetFrames > 0)
                 --tspTextResetFrames;
-            // TSP_TEXT_HELPER_WAIT_A_RELEASE_051_V18
-            //
-            // Do NOT let the raw text helper acquire EVIOCGRAB while
-            // controller A is still physically held.
-            //
-            // A commonly opens a text-capable child window (Save,
-            // Spellmaking, Enchanting, etc). Previously that window enabled
-            // SDL text input in the same frame as A-down, this reconcile
-            // immediately published /tmp/openmw-tsp-text-active, and the
-            // helper grabbed the evdev controller before SDL received A-up.
-            //
-            // SDL was then left believing A was still held, so the next
-            // physical A press produced no new SDL_CONTROLLERBUTTONDOWN.
-            //
-            // Waiting for the release lets SDL process the complete
-            // down/up pair first. On the following frame the helper may grab
-            // normally.
-            const bool tspAStillHeldForTextHandoff
-                = mControllerManager->isButtonPressed(
-                    SDL_CONTROLLER_BUTTON_A);
-
             const bool tspWantHelper
-                = tspTextEntryActive
-                && !tspForceController
-                && tspTextResetFrames == 0
-                && !tspAStillHeldForTextHandoff;
-            // TSP_TEXT_HELPER_WAIT_A_RELEASE_DIAG_051_V18
-            static bool tspWasWaitingForAReleaseV18 = false;
-
-            const bool tspWaitingForAReleaseV18
-                = tspTextEntryActive
-                && !tspForceController
-                && tspTextResetFrames == 0
-                && tspAStillHeldForTextHandoff;
-
-            if (tspWaitingForAReleaseV18
-                != tspWasWaitingForAReleaseV18)
-            {
-                if (std::FILE* tspADebugV18
-                    = std::fopen(
-                        "/tmp/openmw-tsp-a-debug",
-                        "r"))
-                {
-                    std::fclose(tspADebugV18);
-
-                    std::fprintf(
-                        stderr,
-                        "TSP_TEXT_HELPER_WAIT_A_RELEASE_V18 waiting=%d aHeld=%d text=%d\n",
-                        tspWaitingForAReleaseV18 ? 1 : 0,
-                        tspAStillHeldForTextHandoff ? 1 : 0,
-                        tspTextEntryActive ? 1 : 0);
-
-                    std::fflush(stderr);
-                }
-
-                tspWasWaitingForAReleaseV18
-                    = tspWaitingForAReleaseV18;
-            }
-
+                = tspTextEntryActive && !tspForceController && tspTextResetFrames == 0;
             bool tspHaveFlag = false;
             if (std::FILE* tspFlagFile = std::fopen("/tmp/openmw-tsp-text-active", "r"))
             {

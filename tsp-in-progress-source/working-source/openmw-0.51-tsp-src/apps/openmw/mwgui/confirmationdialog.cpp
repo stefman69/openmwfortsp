@@ -1,3 +1,5 @@
+#include <components/debug/debuglog.hpp>
+#include <cstdio>
 #include "confirmationdialog.hpp"
 
 #include <MyGUI_Button.h>
@@ -63,11 +65,33 @@ namespace MWGui
 
     void ConfirmationDialog::onCancelButtonClicked(MyGUI::Widget* /*sender*/)
     {
+
+        // TSP_A_CONFIRM_CANCEL_V16
+        if (std::FILE* tspFlagV16
+            = std::fopen("/tmp/openmw-tsp-a-debug", "r"))
+        {
+            std::fclose(tspFlagV16);
+
+            Log(Debug::Warning)
+                << "TSP_A_CONFIRM_CANCEL_V16";
+        }
+
         exit();
     }
 
     void ConfirmationDialog::onOkButtonClicked(MyGUI::Widget* /*sender*/)
     {
+
+        // TSP_A_CONFIRM_OK_V16
+        if (std::FILE* tspFlagV16
+            = std::fopen("/tmp/openmw-tsp-a-debug", "r"))
+        {
+            std::fclose(tspFlagV16);
+
+            Log(Debug::Warning)
+                << "TSP_A_CONFIRM_OK_V16";
+        }
+
         setVisible(false);
 
         eventOkClicked();
@@ -77,6 +101,19 @@ namespace MWGui
     {
         if (arg.button == SDL_CONTROLLER_BUTTON_A)
         {
+
+            // TSP_A_CONFIRM_CHILD_V16
+            if (std::FILE* tspFlagV16
+                = std::fopen("/tmp/openmw-tsp-a-debug", "r"))
+            {
+                std::fclose(tspFlagV16);
+
+                Log(Debug::Warning)
+                    << "TSP_A_CONFIRM_CHILD_V16"
+                    << " okFocus="
+                    << (mOkButtonFocus ? 1 : 0);
+            }
+
             if (mOkButtonFocus)
                 onOkButtonClicked(mOkButton);
             else

@@ -1,7 +1,7 @@
 label=openmw-tsp
 container=openmw_builder
 source=/root/openmw-0.51-tsp-src
-captured=2026-09-25T11:36:52-07:00
+captured=2026-09-28T00:45:29-07:00
 
 ===== HEAD =====
 ffcb2e36e5f201716d133a6c776443b66f2c83c1
@@ -11,11 +11,21 @@ tsp-clean-pre-interior
 
 ===== STATUS INCLUDING UNTRACKED =====
  M apps/openmw/CMakeLists.txt
+ M apps/openmw/engine.cpp
+ M apps/openmw/mwgui/alchemywindow.cpp
  M apps/openmw/mwgui/birth.cpp
  M apps/openmw/mwgui/class.cpp
+ M apps/openmw/mwgui/confirmationdialog.cpp
+ M apps/openmw/mwgui/dialogue.cpp
+ M apps/openmw/mwgui/itemchargeview.cpp
+ M apps/openmw/mwgui/mainmenu.cpp
  M apps/openmw/mwgui/mapwindow.cpp
+ M apps/openmw/mwgui/merchantrepair.cpp
  M apps/openmw/mwgui/race.cpp
  M apps/openmw/mwgui/review.cpp
+ M apps/openmw/mwgui/savegamedialog.cpp
+ M apps/openmw/mwgui/spellbuyingwindow.cpp
+ M apps/openmw/mwgui/spellcreationdialog.cpp
  M apps/openmw/mwgui/widgets.cpp
  M apps/openmw/mwgui/widgets.hpp
  M apps/openmw/mwinput/controllermanager.cpp
@@ -23,10 +33,14 @@ tsp-clean-pre-interior
  M apps/openmw/mwrender/localmap.cpp
  M apps/openmw/mwrender/occlusionculling.cpp
  M apps/openmw/mwstate/statemanagerimp.cpp
+ M apps/openmw/mwworld/cellpreloader.cpp
  M apps/openmw/mwworld/scene.cpp
  M apps/openmw/mwworld/scene.hpp
  M components/CMakeLists.txt
  M components/crashcatcher/crashcatcher.cpp
+ M components/resource/objectcache.hpp
+ M components/resource/scenemanager.cpp
+ M components/sdlutil/sdlinputwrapper.cpp
  M files/data/mygui/openmw_chargen_class.layout
  M files/data/mygui/openmw_chargen_create_class.layout
  M files/data/mygui/openmw_chargen_race.layout

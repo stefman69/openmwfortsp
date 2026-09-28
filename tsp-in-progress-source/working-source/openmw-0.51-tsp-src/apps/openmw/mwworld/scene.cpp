@@ -1553,7 +1553,38 @@ if (shouldLive)
                 preloadFastTravelDestinations(playerPos, exteriorPositions);
         }
 
-        mPreloader->setTerrainPreloadPositions(exteriorPositions);
+        // TSP_TERRAIN_PRELOAD_DEDUP_V1
+        //
+        // Do not repeatedly rebuild terrain that CellPreloader already
+        // considers valid for these exact target grids. isTerrainLoaded()
+        // already applies the normal terrain expiry time and the same
+        // positional tolerance used by cell-transition readiness.
+        //
+        // BGALLOC_V1 measured thousands of redundant TerrainPreloadItems
+        // during ordinary exterior traversal. Keep predictive preloading,
+        // but only issue new work when at least one requested target is
+        // genuinely not resident anymore.
+        bool tspTerrainReady = !exteriorPositions.empty();
+
+        if (tspTerrainReady)
+        {
+            const double tspReferenceTime = mRendering.getReferenceTime();
+
+            for (const PositionCellGrid& tspPosition : exteriorPositions)
+            {
+                if (!mPreloader->isTerrainLoaded(
+                        tspPosition, tspReferenceTime))
+                {
+                    tspTerrainReady = false;
+                    break;
+                }
+            }
+        }
+
+        // Empty positions still need to clear exterior terrain preload state
+        // when leaving exterior gameplay.
+        if (!tspTerrainReady || exteriorPositions.empty())
+            mPreloader->setTerrainPreloadPositions(exteriorPositions);
     }
 
     void Scene::preloadTeleportDoorDestinations(const osg::Vec3f& playerPos, const osg::Vec3f& predictedPos)
