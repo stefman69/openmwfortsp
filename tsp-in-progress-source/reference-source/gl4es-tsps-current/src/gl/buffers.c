@@ -92,6 +92,59 @@ static int tsp_orphan_rotate(glbuffer_t* buff, GLenum target) {
 
 KHASH_MAP_IMPL_INT(buff, glbuffer_t *);
 KHASH_MAP_IMPL_INT(glvao, glvao_t*);
+/* TSP_GL4ES_OWNER_V1 */
+static const char tsp_gl4es_owner_marker[] __attribute__((used)) = "TSP_GL4ES_OWNER_V1";
+static const char tsp_gl4es_vao_release_marker[] __attribute__((used)) = "TSP_GL4ES_VAO_RELEASE_V1";
+static unsigned long tsp_owner_events = 0;
+static unsigned long tsp_owner_vao_created = 0;
+static unsigned long tsp_owner_vao_freed = 0;
+
+static FILE* tsp_owner_file(void) {
+    static int checked = 0;
+    static FILE* f = NULL;
+    if (!checked) {
+        const char* path = getenv("LIBGL_TSP_OWNER_DIAG");
+        checked = 1;
+        if (path && path[0]) f = fopen(path, "w");
+    }
+    return f;
+}
+
+static void tsp_owner_snapshot(const char* why) {
+    FILE* f = tsp_owner_file();
+    if (!f || !glstate) return;
+    unsigned long ev = ++tsp_owner_events;
+    if (ev != 1 && (ev & 0xffUL) != 0) return;
+
+    unsigned long live_buffers = 0, real_buffers = 0, live_vaos = 0;
+    unsigned long long shadow_bytes = 0;
+
+    if (glstate->buffers) {
+        khash_t(buff)* list = glstate->buffers;
+        for (khint_t k = kh_begin(list); k != kh_end(list); ++k) {
+            if (!kh_exist(list, k)) continue;
+            glbuffer_t* b = kh_value(list, k);
+            if (!b) continue;
+            ++live_buffers;
+            if (b->real_buffer) ++real_buffers;
+            if (b->data && b->size > 0) shadow_bytes += (unsigned long long)b->size;
+        }
+    }
+
+    if (glstate->vaos) {
+        khash_t(glvao)* list = glstate->vaos;
+        for (khint_t k = kh_begin(list); k != kh_end(list); ++k)
+            if (kh_exist(list, k) && kh_value(list, k)) ++live_vaos;
+    }
+
+    fprintf(f,
+        "TSP_GL4ES_OWNER_V1 event=%lu why=%s buffers=%lu real_buffers=%lu shadow_b=%llu vao_live=%lu vao_created=%lu vao_freed=%lu vao_outstanding=%ld\n",
+        ev, why ? why : "?", live_buffers, real_buffers, shadow_bytes,
+        live_vaos, tsp_owner_vao_created, tsp_owner_vao_freed,
+        (long)tsp_owner_vao_created - (long)tsp_owner_vao_freed);
+    fflush(f);
+}
+
 
 static GLuint lastbuffer = 1;
 
@@ -235,6 +288,10 @@ void APIENTRY_GL4ES gl4es_glBindBuffer(GLenum target, GLuint buffer) {
     noerrorShim();
 }
 
+/* Binary/source marker for the TSP GL4ES CPU-shadow fix. */
+const char tsp_gl4es_shadow_shrink_v1_marker[] =
+    "TSP_GL4ES_SHADOW_SHRINK_V1";
+
 void APIENTRY_GL4ES gl4es_glBufferData(GLenum target, GLsizeiptr size, const GLvoid * data, GLenum usage) {
     tsp_vbo_log("DATA", (unsigned int)target, (long)size, data);
     DBG(printf("glBufferData(%s, %zi, %p, %s)\n", PrintEnum(target), size, data, PrintEnum(usage));)
@@ -275,11 +332,30 @@ void APIENTRY_GL4ES gl4es_glBufferData(GLenum target, GLsizeiptr size, const GLv
         DBG(printf(" => real VBO %d\n", buff->real_buffer);)
     }
         
-    if (buff->data && buff->size<size) {
+    /* TSP_GL4ES_SHADOW_SHRINK_V1
+     *
+     * GL4ES keeps a complete CPU shadow for VBOs even when a real GLES
+     * buffer exists.  Stock behaviour only releases that allocation when
+     * the new logical buffer is LARGER.
+     *
+     * OSG recycles long-lived GL buffer objects for differently sized
+     * terrain/scene data.  When a large buffer is later reused for a
+     * smaller allocation, buff->size is reduced but the old larger malloc
+     * remains attached to buff->data.  Repeated traversal therefore lets
+     * the hidden CPU-shadow high-water marks accumulate even while OSG's
+     * current logical buffer bytes remain bounded.
+     *
+     * glBufferData replaces the previous data store, so there is no reason
+     * to retain the old CPU allocation when its size changes.  Keep the
+     * complete shadow semantics required by MapBuffer/GetBufferSubData,
+     * but make its allocation follow the CURRENT logical store size in
+     * both directions.
+     */
+    if (buff->data && buff->size != size) {
         free(buff->data);
         buff->data = NULL;
     }
-    if(!buff->data)
+    if(!buff->data && size > 0)
         buff->data = malloc(size);
     buff->size = size;
     buff->usage = usage;
@@ -287,6 +363,7 @@ void APIENTRY_GL4ES gl4es_glBufferData(GLenum target, GLsizeiptr size, const GLv
     buff->access = GL_READ_WRITE;
     if (data)
         memcpy(buff->data, data, size);
+    tsp_owner_snapshot("BUFFER_DATA");
     // update binded VA
     for (int i=0; i<hardext.maxvattrib; ++i) {
         vertexattrib_t *v = &glstate->vao->vertexattrib[i];
@@ -337,6 +414,7 @@ void APIENTRY_GL4ES gl4es_glNamedBufferData(GLuint buffer, GLsizeiptr size, cons
     buff->access = GL_READ_WRITE;
     if (data)
         memcpy(buff->data, data, size);
+    tsp_owner_snapshot("BUFFER_DATA");
     // update binded VA
     for (int i=0; i<hardext.maxvattrib; ++i) {
         vertexattrib_t *v = &glstate->vao->vertexattrib[i];
@@ -452,6 +530,7 @@ void APIENTRY_GL4ES gl4es_glDeleteBuffers(GLsizei n, const GLuint * buffers) {
                     if (buff->data) free(buff->data);
                     kh_del(buff, list, k);
                     free(buff);
+                    tsp_owner_snapshot("BUFFER_DELETE");
                 }
             }
         }
@@ -929,6 +1008,8 @@ void APIENTRY_GL4ES gl4es_glBindVertexArray(GLuint array) {
         if (k == kh_end(list)){
             k = kh_put(glvao, list, array, &ret);
             glvao = kh_value(list, k) = malloc(sizeof(glvao_t));
+            ++tsp_owner_vao_created;
+            tsp_owner_snapshot("VAO_CREATE");
             // new vao is binded to nothing
             VaoInit(glvao);
             // Copy current status to new VAO
@@ -963,9 +1044,13 @@ void APIENTRY_GL4ES gl4es_glDeleteVertexArrays(GLsizei n, const GLuint *arrays) 
                 k = kh_get(glvao, list, t);
                 if (k != kh_end(list)) {
                     glvao = kh_value(list, k);
+                    if (glstate->vao == glvao)
+                        glstate->vao = glstate->defaultvao;
                     VaoSharedClear(glvao);
                     kh_del(glvao, list, k);
-                    //free(glvao);  //let the use delete those
+                    free(glvao);
+                    ++tsp_owner_vao_freed;
+                    tsp_owner_snapshot("VAO_DELETE");  /* TSP_GL4ES_VAO_RELEASE_V1 */
                 }
             }
         }

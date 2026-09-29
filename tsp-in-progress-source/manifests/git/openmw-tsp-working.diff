@@ -18,10 +18,209 @@ index 51df563b..cc62a79c 100644
 +)
 +# <<< TSP_LOCALMAP_SAFE_ISA_V73 END
 diff --git a/apps/openmw/engine.cpp b/apps/openmw/engine.cpp
-index 7ab4a09c..9a8974bf 100644
+index 7ab4a09c..50fa9708 100644
 --- a/apps/openmw/engine.cpp
 +++ b/apps/openmw/engine.cpp
-@@ -1247,8 +1247,11 @@ void OMW::Engine::prepareEngine()
+@@ -3,7 +3,11 @@
+ #include "mwworld/cellstore.hpp"
+ #include <cstdio>
+ #include <components/shader/shadermanager.hpp>
++#include <osg/BufferObject>
++#include <osg/ContextData>
+ #include <osg/Group>
++#include <osg/State>
++#include <osg/Texture>
+ 
+ #include <cstdlib>
+ #include <cstring>
+@@ -250,6 +254,173 @@ namespace
+         int mMaxTextureImageUnits = 0;
+     };
+ 
++    // TSP_GLOWNER_V1
++    //
++    // Measure the OSG GL object ownership layer that sits below OpenMW's
++    // ResourceSystem caches but above GL4ES/native GLES.
++    //
++    // This is intentionally a one-shot GraphicsOperation. Engine::frame()
++    // queues it at a low frequency while OPENMW_TSP_DEEP_DEBUG is enabled.
++    // Running here keeps the manager reads on the graphics-context thread.
++    class TspGlOwnerSnapshotOperation : public osg::GraphicsOperation
++    {
++    public:
++        TspGlOwnerSnapshotOperation()
++            : GraphicsOperation("TspGlOwnerSnapshotOperation", false)
++        {
++        }
++
++        void operator()(osg::GraphicsContext* graphicsContext) override
++        {
++            if (!graphicsContext)
++                return;
++
++            osg::State* state = graphicsContext->getState();
++
++            if (!state)
++                return;
++
++            const unsigned int contextId = state->getContextID();
++
++            osg::TextureObjectManager* textureManager
++                = osg::get<osg::TextureObjectManager>(contextId);
++
++            osg::GLBufferObjectManager* bufferManager
++                = osg::get<osg::GLBufferObjectManager>(contextId);
++
++            if (!textureManager || !bufferManager)
++            {
++                Log(Debug::Warning)
++                    << "TSP_GLOWNER_V1"
++                    << " context=" << contextId
++                    << " manager_missing=1";
++
++                return;
++            }
++
++            const unsigned int texActive
++                = textureManager->getNumberActiveTextureObjects();
++
++            const unsigned int texOrphan
++                = textureManager->getNumberOrphanedTextureObjects();
++
++            const unsigned int texPoolBytes
++                = textureManager->getCurrTexturePoolSize();
++
++            const unsigned int texMaxBytes
++                = textureManager->getMaxTexturePoolSize();
++
++            const unsigned int texGenerated
++                = textureManager->getNumberGenerated();
++
++            const unsigned int texDeleted
++                = textureManager->getNumberDeleted();
++
++            const unsigned int bufActive
++                = bufferManager->getNumberActiveGLBufferObjects();
++
++            const unsigned int bufOrphan
++                = bufferManager->getNumberOrphanedGLBufferObjects();
++
++            const unsigned int bufPoolBytes
++                = bufferManager->getCurrGLBufferObjectPoolSize();
++
++            const unsigned int bufMaxBytes
++                = bufferManager->getMaxGLBufferObjectPoolSize();
++
++            const unsigned int bufGenerated
++                = bufferManager->getNumberGenerated();
++
++            const unsigned int bufDeleted
++                = bufferManager->getNumberDeleted();
++
++            const unsigned int bufApplied
++                = bufferManager->getNumberApplied();
++
++            Log(Debug::Info)
++                << "TSP_GLOWNER_V1"
++                << " context=" << contextId
++
++                << " tex_active=" << texActive
++                << " tex_orphan=" << texOrphan
++                << " tex_total=" << (texActive + texOrphan)
++                << " tex_pool_b=" << texPoolBytes
++                << " tex_max_b=" << texMaxBytes
++                << " tex_generated=" << texGenerated
++                << " tex_deleted=" << texDeleted
++
++                << " buf_active=" << bufActive
++                << " buf_orphan=" << bufOrphan
++                << " buf_total=" << (bufActive + bufOrphan)
++                << " buf_pool_b=" << bufPoolBytes
++                << " buf_max_b=" << bufMaxBytes
++                << " buf_generated=" << bufGenerated
++                << " buf_deleted=" << bufDeleted
++                << " buf_applied=" << bufApplied;
++        }
++    };
++
++    bool tspGlOwnerDebugEnabled()
++    {
++        static const bool enabled = [] {
++            const char* value
++                = std::getenv("OPENMW_TSP_DEEP_DEBUG");
++
++            if (value == nullptr || *value == '\0')
++                return false;
++
++            return !(std::strcmp(value, "0") == 0
++                || std::strcmp(value, "false") == 0
++                || std::strcmp(value, "off") == 0
++                || std::strcmp(value, "no") == 0);
++        }();
++
++        return enabled;
++    }
++
++    void tspQueueGlOwnerSnapshot(osgViewer::Viewer* viewer)
++    {
++        if (!tspGlOwnerDebugEnabled() || !viewer)
++            return;
++
++        static bool haveLast = false;
++        static std::chrono::steady_clock::time_point last;
++
++        const auto now = std::chrono::steady_clock::now();
++
++        if (haveLast)
++        {
++            const double elapsed
++                = std::chrono::duration_cast<
++                    std::chrono::duration<double>>(
++                        now - last)
++                      .count();
++
++            if (elapsed < 10.0)
++                return;
++        }
++
++        osg::Camera* camera = viewer->getCamera();
++
++        if (!camera)
++            return;
++
++        osg::GraphicsContext* graphicsContext
++            = camera->getGraphicsContext();
++
++        if (!graphicsContext)
++            return;
++
++        //
++        // One-shot only. This operation will be removed after execution.
++        //
++        graphicsContext->add(
++            new TspGlOwnerSnapshotOperation());
++
++        last = now;
++        haveLast = true;
++    }
++
+     void reportStats(unsigned frameNumber, osgViewer::Viewer& viewer, std::ostream& stream)
+     {
+         viewer.getViewerStats()->report(stream, frameNumber);
+@@ -540,6 +711,12 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
+     const osg::Timer* const timer = osg::Timer::instance();
+     osg::Stats* const stats = mViewer->getViewerStats();
+ 
++    // TSP_GLOWNER_V1
++    // Diagnostic-only. The existing MEMOWN diagnostic launcher sets
++    // OPENMW_TSP_DEEP_DEBUG=1; normal gameplay therefore pays no logging
++    // or graphics-operation cost.
++    tspQueueGlOwnerSnapshot(mViewer.get());
++
+     /* TSP_LOAD_FREEZE: hold simulation and input while the shader warm draws
+        burn off. Rendering continues, so the warm-up triangles are drawn and
+        Mali does its ~236ms per program here rather than during play. */
+@@ -1247,8 +1424,11 @@ void OMW::Engine::prepareEngine()
      mResourceSystem = std::make_unique<Resource::ResourceSystem>(
          mVFS.get(), Settings::cells().mCacheExpiryDelay, &mEncoder.get()->getStatelessEncoder());
      mResourceSystem->getSceneManager()->getShaderManager().setMaxTextureUnits(mGlMaxTextureImageUnits);
